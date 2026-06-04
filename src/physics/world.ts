@@ -35,6 +35,12 @@ export function createWorld(course: Course): PhysicsWorld {
     }));
   }
 
+  for (const s of course.splitters) {
+    statics.push(Matter.Bodies.polygon(s.x, s.y, 3, s.radius, {
+      isStatic: true, angle: s.angle, restitution: 0.5, friction: 0, chamfer: { radius: 3 },
+    }));
+  }
+
   const spinners: SpinnerBody[] = [];
   for (const sp of course.spinners) {
     const body = Matter.Bodies.rectangle(sp.x, sp.y, sp.length, sp.thickness, {

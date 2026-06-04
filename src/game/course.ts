@@ -6,6 +6,9 @@ export interface Spinner { x: number; y: number; length: number; thickness: numb
 export interface Booster { x: number; y: number; w: number; h: number; fx: number; fy: number }
 export interface Teleport { ex: number; ey: number; er: number; tx: number; ty: number }
 export interface Slope { x: number; y: number; w: number; h: number; angle: number }
+export interface JumpPad { x: number; y: number; w: number; h: number; vy: number }   // 위로 발사
+export interface Cannon { x: number; y: number; w: number; h: number; vx: number; vy: number } // 강하게 발사
+export interface Splitter { x: number; y: number; radius: number; angle: number }     // 삼각 갈림
 
 export interface Course {
   width: number;
@@ -19,6 +22,9 @@ export interface Course {
   boosters: Booster[];
   teleports: Teleport[];
   slopes: Slope[];
+  jumppads: JumpPad[];
+  cannons: Cannon[];
+  splitters: Splitter[];
 }
 
 const W = 600;
@@ -52,6 +58,9 @@ export function generateCourse(): Course {
   const boosters: Booster[] = [];
   const teleports: Teleport[] = [];
   const slopes: Slope[] = [];
+  const jumppads: JumpPad[] = [];
+  const cannons: Cannon[] = [];
+  const splitters: Splitter[] = [];
 
   const finishY = TOP + (ROWS + 1) * ROW_GAP + 60;
   const height = finishY + 120;
@@ -66,8 +75,20 @@ export function generateCourse(): Course {
       continue;
     }
 
-    const pick = Math.floor(Math.random() * 4);
-    if (pick === 0) {
+    const pick = Math.floor(Math.random() * 7);
+    if (pick === 4) {
+      // 점프대: 밟으면 위로 튕겨 큰 포물선 (카오스·역전)
+      const x = innerL + 42 + Math.random() * (innerW - 84);
+      jumppads.push({ x, y, w: 78, h: 22, vy: -13 });
+    } else if (pick === 5) {
+      // 대포: 강하게 대각/아래로 발사 (지름길·역전)
+      const x = innerL + 42 + Math.random() * (innerW - 84);
+      cannons.push({ x, y, w: 70, h: 28, vx: (Math.random() < 0.5 ? 1 : -1) * (5 + Math.random() * 3), vy: 12 });
+    } else if (pick === 6) {
+      // 스플리터: 삼각 쐐기. 흐름을 좌우로 가름.
+      const x = innerL + innerW * (0.3 + Math.random() * 0.4);
+      splitters.push({ x, y, radius: 26, angle: -Math.PI / 2 });
+    } else if (pick === 0) {
       // 회전 범퍼: 가운데 근처. 길이가 짧아(최대 140) 안쪽 폭(>500)을 못 막으므로
       // 양옆에 항상 통로가 남는다(별도 핀 보강 불필요).
       const x = innerL + innerW * (0.3 + Math.random() * 0.4);
@@ -107,5 +128,6 @@ export function generateCourse(): Course {
     width: W, height, startY: TOP, finishY,
     wallThickness: WALL, ballRadius: BALL_R,
     pegs, spinners, boosters, teleports, slopes,
+    jumppads, cannons, splitters,
   };
 }

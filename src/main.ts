@@ -9,11 +9,16 @@ import type { BallInit, ResultMode } from './types';
 
 const ui = mountUI(document.querySelector<HTMLDivElement>('#app')!);
 const ctx = ui.canvas.getContext('2d')!;
+const viewW = ui.canvas.width;
 const viewH = ui.canvas.height;
 
 const FIXED_DT = 1000 / 60;
-const SLOWMO_DIST = 240;   // 선두가 결승선 이만큼 이내면 슬로모
+const SLOWMO_DIST = 240;
 const SLOWMO_SCALE = 0.45;
+const CELEBRATE_MS = 4200;
+const CONFETTI_COLORS = ['#ff3df0', '#39d0ff', '#5affa3', '#ff9b3d', '#ffe14d', '#b46bff'];
+
+interface Confetto { x: number; y: number; vx: number; vy: number; rot: number; vr: number; color: string; size: number }
 
 const cam = new Camera();
 let engine: Engine | null = null;
@@ -21,10 +26,48 @@ let raf = 0;
 let last = 0;
 let acc = 0;
 let currentMode: ResultMode = 'ranking';
+let confetti: Confetto[] = [];
+let celebrateUntil = 0;
+
+function spawnConfetti(): Confetto[] {
+  const pieces: Confetto[] = [];
+  for (let i = 0; i < 170; i++) {
+    pieces.push({
+      x: Math.random() * viewW,
+      y: -Math.random() * viewH * 0.6,
+      vx: (Math.random() - 0.5) * 3,
+      vy: 2 + Math.random() * 3.5,
+      rot: Math.random() * Math.PI,
+      vr: (Math.random() - 0.5) * 0.3,
+      color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+      size: 5 + Math.random() * 6,
+    });
+  }
+  return pieces;
+}
+
+function drawConfetti(deltaMs: number): void {
+  const dt = deltaMs / FIXED_DT;
+  for (const c of confetti) {
+    c.x += c.vx * dt;
+    c.y += c.vy * dt;
+    c.vy += 0.05 * dt;
+    c.rot += c.vr * dt;
+    if (c.y > viewH + 20) c.y = -20; // 순환
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(c.rot);
+    ctx.fillStyle = c.color;
+    ctx.fillRect(-c.size / 2, -c.size / 2, c.size, c.size * 0.6);
+    ctx.restore();
+  }
+}
 
 ui.onStart((cfg) => {
   cancelAnimationFrame(raf);
   currentMode = cfg.mode;
+  confetti = [];
+  celebrateUntil = 0;
 
   const course = generateCourse();
   const colors = assignColors(cfg.names.length);
@@ -41,6 +84,8 @@ ui.onStart((cfg) => {
     },
     onComplete: (ranking) => {
       ui.showResult(ranking.map((id) => idToName.get(id)!), currentMode);
+      confetti = spawnConfetti();
+      celebrateUntil = performance.now() + CELEBRATE_MS;
     },
   });
 
@@ -52,20 +97,20 @@ ui.onStart((cfg) => {
     last = now;
     if (frame > 250) frame = 250;
 
-    // 결승선 근처에선 시간을 늦춰 막판 클로즈업 연출
     const e = engine!;
-    const nearFinish = e.leaderY() > e.course.finishY - SLOWMO_DIST;
-    acc += frame * (nearFinish ? SLOWMO_SCALE : 1);
-
-    // 프레임당 물리 틱 수 제한 → 렌더가 느린 프레임에 sim이 빨리 감기는 것 방지
-    let steps = 0;
-    while (acc >= FIXED_DT && steps < 4 && !e.isFinished()) {
-      e.tick(FIXED_DT);
-      acc -= FIXED_DT;
-      steps++;
+    if (!e.isFinished()) {
+      const nearFinish = e.leaderY() > e.course.finishY - SLOWMO_DIST;
+      acc += frame * (nearFinish ? SLOWMO_SCALE : 1);
+      let steps = 0;
+      while (acc >= FIXED_DT && steps < 4 && !e.isFinished()) {
+        e.tick(FIXED_DT);
+        acc -= FIXED_DT;
+        steps++;
+      }
+      if (acc > FIXED_DT * 4) acc = FIXED_DT * 4;
     }
-    if (acc > FIXED_DT * 4) acc = FIXED_DT * 4;
 
+    cam.addShake(e.takeShake());
     cam.update({
       leaderY: e.leaderY(),
       leaderVY: e.leaderVY(),
@@ -75,8 +120,12 @@ ui.onStart((cfg) => {
       courseH: e.course.height,
     });
     render(ctx, e, cam);
+    if (celebrateUntil) drawConfetti(frame);
 
-    if (!e.isFinished()) raf = requestAnimationFrame(loop);
+    const celebrating = celebrateUntil && now < celebrateUntil;
+    if (!e.isFinished() || celebrating) {
+      raf = requestAnimationFrame(loop);
+    }
   };
   raf = requestAnimationFrame(loop);
 });

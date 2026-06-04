@@ -9,6 +9,9 @@ const SPINNER_COLOR = '#ff9b3d';
 const BOOSTER_COLOR = '#41f5a3';
 const TELE_IN = '#b46bff';
 const TELE_OUT = '#6bc6ff';
+const JUMP_COLOR = '#5affa3';
+const CANNON_COLOR = '#ff6a3d';
+const SPLITTER_COLOR = '#9a8aff';
 const LABEL = '#ffffff';
 
 function truncate(name: string, max = 7): string {
@@ -27,6 +30,8 @@ function clearGlow(ctx: CanvasRenderingContext2D): void {
 export interface CameraView {
   top: number;
   zoom: number;
+  offX: number;
+  offY: number;
 }
 
 export function render(ctx: CanvasRenderingContext2D, engine: Engine, cam: CameraView): void {
@@ -42,19 +47,23 @@ export function render(ctx: CanvasRenderingContext2D, engine: Engine, cam: Camer
   ctx.fillRect(0, 0, w, h);
 
   ctx.save();
-  // 가로는 코스 중앙 기준으로 줌, 세로는 카메라 top 기준 스크롤
-  ctx.translate(w / 2, 0);
+  // 가로는 코스 중앙 기준으로 줌, 세로는 카메라 top 기준 스크롤(+흔들림 오프셋)
+  ctx.translate(w / 2 + cam.offX, cam.offY);
   ctx.scale(z, z);
   ctx.translate(-course.width / 2, -top);
 
   drawWalls(ctx, course);
   drawFinish(ctx, course, visible);
   drawSlopes(ctx, course, visible);
+  drawSplitters(ctx, course, visible);
   drawBoosters(ctx, course, visible);
+  drawJumpPads(ctx, course, visible);
+  drawCannons(ctx, course, visible);
   drawTeleports(ctx, course, visible);
   drawPegs(ctx, course, visible);
   drawSpinners(ctx, engine, course, visible);
   drawBalls(ctx, engine, visible);
+  drawParticles(ctx, engine, visible);
 
   ctx.restore();
 }
@@ -184,6 +193,87 @@ function ring(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, co
   ctx.arc(x, y, r * 0.55, 0, Math.PI * 2);
   ctx.stroke();
   clearGlow(ctx);
+}
+
+function drawJumpPads(ctx: CanvasRenderingContext2D, course: Course, visible: (y: number) => boolean): void {
+  for (const j of course.jumppads) {
+    if (!visible(j.y)) continue;
+    glow(ctx, JUMP_COLOR, 14);
+    ctx.fillStyle = 'rgba(90,255,163,0.22)';
+    ctx.strokeStyle = JUMP_COLOR;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(j.x - j.w / 2, j.y - j.h / 2, j.w, j.h, 6);
+    ctx.fill();
+    ctx.stroke();
+    clearGlow(ctx);
+    // 위 방향 셰브론 3겹
+    ctx.strokeStyle = JUMP_COLOR;
+    ctx.lineWidth = 3;
+    for (let k = -1; k <= 1; k++) {
+      const oy = k * 6;
+      ctx.beginPath();
+      ctx.moveTo(j.x - 10, j.y + 4 + oy);
+      ctx.lineTo(j.x, j.y - 6 + oy);
+      ctx.lineTo(j.x + 10, j.y + 4 + oy);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawCannons(ctx: CanvasRenderingContext2D, course: Course, visible: (y: number) => boolean): void {
+  for (const c of course.cannons) {
+    if (!visible(c.y)) continue;
+    const dir = Math.sign(c.vx) || 1;
+    glow(ctx, CANNON_COLOR, 16);
+    ctx.fillStyle = 'rgba(255,106,61,0.28)';
+    ctx.strokeStyle = CANNON_COLOR;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(c.x - c.w / 2, c.y - c.h / 2, c.w, c.h, 8);
+    ctx.fill();
+    ctx.stroke();
+    clearGlow(ctx);
+    // 발사 방향 화살표(대각 아래)
+    ctx.strokeStyle = CANNON_COLOR;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(c.x - dir * 12, c.y - 6);
+    ctx.lineTo(c.x + dir * 12, c.y + 8);
+    ctx.moveTo(c.x + dir * 12, c.y + 8);
+    ctx.lineTo(c.x + dir * 2, c.y + 8);
+    ctx.moveTo(c.x + dir * 12, c.y + 8);
+    ctx.lineTo(c.x + dir * 12, c.y - 2);
+    ctx.stroke();
+  }
+}
+
+function drawSplitters(ctx: CanvasRenderingContext2D, course: Course, visible: (y: number) => boolean): void {
+  glow(ctx, SPLITTER_COLOR, 12);
+  ctx.fillStyle = '#4a4480';
+  for (const s of course.splitters) {
+    if (!visible(s.y)) continue;
+    const r = s.radius;
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y - r);          // 꼭짓점 위
+    ctx.lineTo(s.x - r * 0.9, s.y + r * 0.7);
+    ctx.lineTo(s.x + r * 0.9, s.y + r * 0.7);
+    ctx.closePath();
+    ctx.fill();
+  }
+  clearGlow(ctx);
+}
+
+function drawParticles(ctx: CanvasRenderingContext2D, engine: Engine, visible: (y: number) => boolean): void {
+  for (const p of engine.particles.list) {
+    if (!visible(p.y)) continue;
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.life));
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
 }
 
 function drawBalls(ctx: CanvasRenderingContext2D, engine: Engine, visible: (y: number) => boolean): void {

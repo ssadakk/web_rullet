@@ -1,9 +1,16 @@
 import Matter from 'matter-js';
 import type { BallId, BallInit, Vec2 } from '../types';
 import { createWorld, spawnBall, removeBall, step, type PhysicsWorld } from '../physics/world';
-import { rotateSpinners, applyBoosters, applyTeleports } from './devices';
+import { rotateSpinners, applyBoosters, applyTeleports, applyLaunchers, type DeviceEvent } from './devices';
 import type { Course } from './course';
 import type { Ball } from './ball';
+import { Particles } from '../render/particles';
+
+const EVENT_COLOR: Record<DeviceEvent['kind'], string> = {
+  teleport: '#b46bff',
+  jump: '#41f5a3',
+  cannon: '#ff9b3d',
+};
 
 export interface EngineCallbacks {
   onFinish?: (id: BallId, finishOrder: BallId[]) => void;
@@ -19,11 +26,14 @@ export class Engine {
   readonly balls: Map<BallId, Ball> = new Map();
   private finishOrder: BallId[] = [];
   private teleportCd: Map<BallId, number> = new Map();
+  private launchCd: Map<BallId, number> = new Map();
   private progress: Map<BallId, { bestY: number; sinceMs: number }> = new Map();
   private elapsed = 0;
   private finished = false;
   private lastLeaderY = 0;
   private cbs: EngineCallbacks;
+  readonly particles = new Particles();
+  private shakeImpulse = 0;
 
   constructor(inits: BallInit[], course: Course, cbs: EngineCallbacks = {}) {
     this.course = course;
@@ -116,6 +126,9 @@ export class Engine {
   private finishBall(id: BallId): void {
     const ball = this.balls.get(id);
     if (!ball || ball.finished) return;
+    const pos = this.world.bodies.get(id)?.position;
+    if (pos) this.particles.burst(pos.x, this.course.finishY, ball.color, 20, 6);
+    this.shakeImpulse = Math.max(this.shakeImpulse, 9);
     ball.finished = true;
     ball.trail = [];
     this.progress.delete(id);
@@ -124,15 +137,49 @@ export class Engine {
     this.cbs.onFinish?.(id, [...this.finishOrder]);
   }
 
+  // 역전 강화(고무줄): 뒤처진 공은 아래로 가속, 선두는 살짝 끌어 막판까지 붙인다.
+  private rubberBand(): void {
+    if (this.world.bodies.size < 2) return;
+    const leaderY = this.leaderY();
+    for (const body of this.world.bodies.values()) {
+      const behind = leaderY - body.position.y; // 양수 = 뒤처짐
+      if (behind > 70) {
+        const boost = Math.min(behind / 700, 1) * 0.0017 * body.mass;
+        Matter.Body.applyForce(body, body.position, { x: 0, y: boost });
+      } else if (behind < 24) {
+        Matter.Body.applyForce(body, body.position, { x: 0, y: -0.00045 * body.mass });
+      }
+    }
+  }
+
+  // 카메라가 소비할 화면 흔들림 세기 (소비 후 0)
+  takeShake(): number {
+    const s = this.shakeImpulse;
+    this.shakeImpulse = 0;
+    return s;
+  }
+
   tick(deltaMs: number): void {
     if (this.finished) return;
     this.elapsed += deltaMs;
 
     rotateSpinners(this.world, deltaMs);
     applyBoosters(this.world, this.course);
-    applyTeleports(this.world, this.course, this.teleportCd, this.elapsed);
+    const events: DeviceEvent[] = [
+      ...applyTeleports(this.world, this.course, this.teleportCd, this.elapsed),
+      ...applyLaunchers(this.world, this.course, this.launchCd, this.elapsed),
+    ];
+    this.rubberBand();
     this.antiStuck();
     step(this.world, deltaMs);
+
+    // 장치 이벤트 → 파티클 + 화면 흔들림
+    for (const e of events) {
+      this.particles.burst(e.x, e.y, EVENT_COLOR[e.kind], e.kind === 'teleport' ? 12 : 16, 5);
+      if (e.kind === 'cannon') this.shakeImpulse = Math.max(this.shakeImpulse, 11);
+      else if (e.kind === 'jump') this.shakeImpulse = Math.max(this.shakeImpulse, 7);
+    }
+    this.particles.update(deltaMs);
 
     // 트레일 갱신
     for (const [id, body] of this.world.bodies) {
