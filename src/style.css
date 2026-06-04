@@ -1,0 +1,26 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: sans-serif; background: #06080f; color: #e6e6e6; }
+.layout { display: flex; height: 100vh; }
+.panel { width: 280px; padding: 16px; display: flex; flex-direction: column; gap: 10px; background: #0c0f1a; border-right: 1px solid #1b2236; overflow-y: auto; }
+.panel h1 { font-size: 18px; margin: 0 0 8px; color: #39d0ff; text-shadow: 0 0 12px rgba(57,208,255,0.5); }
+.panel textarea { width: 100%; resize: vertical; background: #06080f; color: #e6e6e6; border: 1px solid #1b2236; border-radius: 6px; padding: 8px; }
+.panel label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.panel select { padding: 6px; background: #06080f; color: #e6e6e6; border: 1px solid #1b2236; border-radius: 6px; }
+.panel button { padding: 10px; font-size: 15px; font-weight: bold; background: #2f6bff; color: #fff; border: none; border-radius: 6px; cursor: pointer; box-shadow: 0 0 14px rgba(47,107,255,0.4); }
+.panel button:hover { background: #4a82ff; }
+.panel button:disabled { background: #1b2236; color: #66708a; cursor: not-allowed; box-shadow: none; }
+#hint { color: #ff6b6b; font-size: 13px; min-height: 16px; margin: 0; }
+.live-title { font-size: 13px; font-weight: bold; margin: 8px 0 0; color: #8aa0c0; }
+#live { font-size: 13px; padding-left: 0; list-style: none; margin: 4px 0 0; }
+#live li { padding: 2px 0; }
+#live .rank { display: inline-block; min-width: 32px; color: #39d0ff; font-weight: bold; }
+.stage { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; background: #06080f; }
+.stage canvas { box-shadow: 0 0 40px rgba(0,0,0,0.6); }
+.overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.65); }
+.overlay.hidden { display: none; }
+.result { background: #0c0f1a; border: 1px solid #1b2236; padding: 24px 40px; border-radius: 12px; text-align: center; max-height: 80vh; overflow-y: auto; box-shadow: 0 0 30px rgba(57,208,255,0.2); }
+.result h2 { color: #39d0ff; }
+.result .big { font-size: 32px; font-weight: bold; }
+.result ol { text-align: left; }
+.result .restart { margin-top: 16px; padding: 8px 20px; font-size: 14px; font-weight: bold; background: #2f6bff; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+.result .restart:hover { background: #4a82ff; }
