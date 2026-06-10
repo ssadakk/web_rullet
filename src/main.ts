@@ -2,7 +2,7 @@ import './style.css';
 import { mountUI } from './ui/controls';
 import { Engine } from './game/engine';
 import { generateCourse } from './game/course';
-import { render } from './render/renderer';
+import { render, drawHud } from './render/renderer';
 import { Camera } from './render/camera';
 import { assignColors } from './colors';
 import type { BallInit, ResultMode } from './types';
@@ -120,6 +120,7 @@ ui.onStart((cfg) => {
       courseH: e.course.height,
     });
     render(ctx, e, cam);
+    drawHud(ctx, e, cam);
     if (celebrateUntil) drawConfetti(frame);
 
     const celebrating = celebrateUntil && now < celebrateUntil;

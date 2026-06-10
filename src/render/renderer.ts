@@ -1,9 +1,13 @@
 import type { Engine } from '../game/engine';
-import type { Course } from '../game/course';
+import type { Course, SectionZone } from '../game/course';
+
+function hueAtY(sections: SectionZone[], y: number): number {
+  for (const s of sections) if (y >= s.y0 && y < s.y1) return s.hue;
+  return 190;
+}
 
 const BG = '#06080f';
 const WALL_COLOR = '#161a2b';
-const PEG_COLOR = '#39d0ff';
 const FINISH_COLOR = '#ff3df0';
 const SPINNER_COLOR = '#ff9b3d';
 const BOOSTER_COLOR = '#41f5a3';
@@ -52,6 +56,7 @@ export function render(ctx: CanvasRenderingContext2D, engine: Engine, cam: Camer
   ctx.scale(z, z);
   ctx.translate(-course.width / 2, -top);
 
+  drawSectionBands(ctx, course, top, bottom);
   drawWalls(ctx, course);
   drawFinish(ctx, course, visible);
   drawSlopes(ctx, course, visible);
@@ -60,12 +65,57 @@ export function render(ctx: CanvasRenderingContext2D, engine: Engine, cam: Camer
   drawJumpPads(ctx, course, visible);
   drawCannons(ctx, course, visible);
   drawTeleports(ctx, course, visible);
+  drawBumpers(ctx, course, visible);
   drawPegs(ctx, course, visible);
   drawSpinners(ctx, engine, course, visible);
+  drawSectionDividers(ctx, course, visible);
   drawBalls(ctx, engine, visible);
   drawParticles(ctx, engine, visible);
 
   ctx.restore();
+}
+
+// 구간별 옅은 색 밴드 (여정감·진행감)
+function drawSectionBands(ctx: CanvasRenderingContext2D, course: Course, top: number, bottom: number): void {
+  for (const s of course.sections) {
+    if (s.y1 < top || s.y0 > bottom) continue;
+    ctx.fillStyle = `hsla(${s.hue}, 70%, 50%, 0.08)`;
+    ctx.fillRect(course.wallThickness, s.y0, course.width - course.wallThickness * 2, s.y1 - s.y0);
+  }
+}
+
+// 구간 경계 네온 라인 + 이름 라벨
+function drawSectionDividers(ctx: CanvasRenderingContext2D, course: Course, visible: (y: number) => boolean): void {
+  for (const s of course.sections) {
+    if (!visible(s.y0)) continue;
+    ctx.strokeStyle = `hsla(${s.hue}, 90%, 65%, 0.5)`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(course.wallThickness, s.y0);
+    ctx.lineTo(course.width - course.wallThickness, s.y0);
+    ctx.stroke();
+    ctx.fillStyle = `hsla(${s.hue}, 90%, 70%, 0.85)`;
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(s.name, course.wallThickness + 8, s.y0 + 5);
+  }
+}
+
+function drawBumpers(ctx: CanvasRenderingContext2D, course: Course, visible: (y: number) => boolean): void {
+  glow(ctx, '#ffe14d', 14);
+  for (const b of course.bumpers) {
+    if (!visible(b.y)) continue;
+    ctx.fillStyle = '#ffe14d';
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff7c2';
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  clearGlow(ctx);
 }
 
 function drawWalls(ctx: CanvasRenderingContext2D, course: Course): void {
@@ -91,14 +141,16 @@ function drawFinish(ctx: CanvasRenderingContext2D, course: Course, visible: (y: 
 }
 
 function drawPegs(ctx: CanvasRenderingContext2D, course: Course, visible: (y: number) => boolean): void {
-  // 핀은 수가 많아 shadowBlur 글로우가 비싸다 → 저비용 2겹 원(헤일로+코어)으로 대체.
+  // 핀은 수가 많아 shadowBlur 글로우가 비싸다 → 저비용 2겹 원(헤일로+코어).
+  // 색은 구간 hue로 칠해 '내가 어느 구간인지' 진행감을 준다.
   for (const p of course.pegs) {
     if (!visible(p.y)) continue;
-    ctx.fillStyle = 'rgba(57,208,255,0.16)';
+    const hue = hueAtY(course.sections, p.y);
+    ctx.fillStyle = `hsla(${hue}, 90%, 60%, 0.16)`;
     ctx.beginPath();
     ctx.arc(p.x, p.y, p.r + 4, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = PEG_COLOR;
+    ctx.fillStyle = `hsl(${hue}, 90%, 64%)`;
     ctx.beginPath();
     ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
     ctx.fill();
@@ -262,6 +314,61 @@ function drawSplitters(ctx: CanvasRenderingContext2D, course: Course, visible: (
     ctx.fill();
   }
   clearGlow(ctx);
+}
+
+// 화면 고정 HUD: 우측 미니맵(전체 코스 + 공 위치 + 카메라 범위) + 상단 진행바.
+export function drawHud(ctx: CanvasRenderingContext2D, engine: Engine, cam: CameraView): void {
+  const course = engine.course;
+  const w = ctx.canvas.width;
+  const h = ctx.canvas.height;
+
+  // 상단 진행바
+  const prog = Math.max(0, Math.min(1, (engine.leaderY() - course.startY) / (course.finishY - course.startY)));
+  const pbX = 14, pbW = w - 28, pbY = 12, pbH = 6;
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.beginPath();
+  ctx.roundRect(pbX, pbY, pbW, pbH, 3);
+  ctx.fill();
+  ctx.fillStyle = prog > 0.85 ? '#ff3df0' : '#39d0ff';
+  ctx.beginPath();
+  ctx.roundRect(pbX, pbY, pbW * prog, pbH, 3);
+  ctx.fill();
+
+  // 우측 미니맵
+  const mmX = w - 12;
+  const mmTop = 36;
+  const mmH = h - 60;
+  const span = course.height - course.startY;
+  const toMM = (y: number) => mmTop + Math.max(0, Math.min(1, (y - course.startY) / span)) * mmH;
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(mmX, mmTop);
+  ctx.lineTo(mmX, mmTop + mmH);
+  ctx.stroke();
+
+  // 카메라 가시 범위
+  const camTopY = toMM(cam.top);
+  const camBotY = toMM(cam.top + h / cam.zoom);
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(mmX - 5, camTopY, 10, Math.max(3, camBotY - camTopY));
+
+  // 결승선 표식
+  ctx.fillStyle = '#ff3df0';
+  ctx.fillRect(mmX - 5, toMM(course.finishY) - 1, 10, 2);
+
+  // 공 점
+  for (const ball of engine.balls.values()) {
+    if (ball.finished) continue;
+    const pos = engine.bodyPos(ball.id);
+    if (!pos) continue;
+    ctx.fillStyle = ball.color;
+    ctx.beginPath();
+    ctx.arc(mmX, toMM(pos.y), 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function drawParticles(ctx: CanvasRenderingContext2D, engine: Engine, visible: (y: number) => boolean): void {

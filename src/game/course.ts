@@ -1,23 +1,41 @@
-// 세로 낙하 코스의 랜덤 생성과 데이터 모델.
-// 좌표 y는 아래로 증가(matter 중력 방향). 매판 Math.random으로 새 코스 생성.
+// 세로 낙하 코스: 성격이 다른 '구간(섹션)'을 랜덤으로 이어붙인 시퀀스.
+// 균일 핀 격자(과거)의 단조로움을 구간 단위 구조 변화로 깬다.
+// 좌표 y는 아래로 증가. 바깥 좌우 벽(world.ts)이 코스를 가두고, 섹션은 그 안에
+// 장애물을 채운다(항상 통로를 남겨 솔버빌리티 보장).
 
 export interface Peg { x: number; y: number; r: number }
+export interface Bumper { x: number; y: number; r: number }            // 고탄성 범퍼
 export interface Spinner { x: number; y: number; length: number; thickness: number; speed: number; angle: number }
 export interface Booster { x: number; y: number; w: number; h: number; fx: number; fy: number }
 export interface Teleport { ex: number; ey: number; er: number; tx: number; ty: number }
-export interface Slope { x: number; y: number; w: number; h: number; angle: number }
-export interface JumpPad { x: number; y: number; w: number; h: number; vy: number }   // 위로 발사
-export interface Cannon { x: number; y: number; w: number; h: number; vx: number; vy: number } // 강하게 발사
-export interface Splitter { x: number; y: number; radius: number; angle: number }     // 삼각 갈림
+export interface Slope { x: number; y: number; w: number; h: number; angle: number } // 정적 경사/벽 (깔때기·협곡·슈트에 재사용)
+export interface JumpPad { x: number; y: number; w: number; h: number; vy: number }
+export interface Cannon { x: number; y: number; w: number; h: number; vx: number; vy: number }
+export interface Splitter { x: number; y: number; radius: number; angle: number }
+export interface SectionZone { y0: number; y1: number; hue: number; name: string }
 
 export interface Course {
   width: number;
   height: number;
-  startY: number;       // 공 투하 y
-  finishY: number;      // 이 y를 넘으면 도착
+  startY: number;
+  finishY: number;
   wallThickness: number;
   ballRadius: number;
   pegs: Peg[];
+  bumpers: Bumper[];
+  spinners: Spinner[];
+  boosters: Booster[];
+  teleports: Teleport[];
+  slopes: Slope[];
+  jumppads: JumpPad[];
+  cannons: Cannon[];
+  splitters: Splitter[];
+  sections: SectionZone[];
+}
+
+interface Arrays {
+  pegs: Peg[];
+  bumpers: Bumper[];
   spinners: Spinner[];
   boosters: Booster[];
   teleports: Teleport[];
@@ -33,101 +51,166 @@ const BALL_R = 9;
 const PEG_R = 6;
 const TOP = 90;
 const ROW_GAP = 104;
-const ROWS = 40;
 const PIN_GAP = 66;
-const PAD = 24; // 벽 안쪽 여유
 
-const innerL = WALL + PAD;
-const innerR = W - WALL - PAD;
+const innerL = WALL + 24;
+const innerR = W - WALL - 24;
 const innerW = innerR - innerL;
+
+type SectionId = 'pinfield' | 'funnel' | 'canyon' | 'chamber' | 'pit';
+const MIDDLE: SectionId[] = ['pinfield', 'funnel', 'canyon', 'chamber', 'pit'];
+
+const HEIGHT: Record<SectionId, number> = {
+  pinfield: 360, funnel: 380, canyon: 460, chamber: 420, pit: 320,
+};
+const FINISH_H = 400;
+
+const HUE: Record<string, number> = {
+  pinfield: 190, funnel: 350, canyon: 275, chamber: 32, pit: 150, finish: 318,
+};
+const NAME: Record<string, string> = {
+  pinfield: 'PINS', funnel: 'FUNNEL', canyon: 'CANYON', chamber: 'CHAOS', pit: 'DROP', finish: 'FINAL',
+};
+
+function emptyArrays(): Arrays {
+  return { pegs: [], bumpers: [], spinners: [], boosters: [], teleports: [], slopes: [], jumppads: [], cannons: [], splitters: [] };
+}
 
 function pushPegRow(pegs: Peg[], y: number, r: number): void {
   const offset = (r % 2) * (PIN_GAP / 2);
   for (let x = innerL + offset; x <= innerR; x += PIN_GAP) {
-    pegs.push({
-      x: x + (Math.random() - 0.5) * 8,
-      y: y + (Math.random() - 0.5) * 8,
-      r: PEG_R,
-    });
+    pegs.push({ x: x + (Math.random() - 0.5) * 8, y: y + (Math.random() - 0.5) * 8, r: PEG_R });
   }
 }
 
-export function generateCourse(): Course {
-  const pegs: Peg[] = [];
-  const spinners: Spinner[] = [];
-  const boosters: Booster[] = [];
-  const teleports: Teleport[] = [];
-  const slopes: Slope[] = [];
-  const jumppads: JumpPad[] = [];
-  const cannons: Cannon[] = [];
-  const splitters: Splitter[] = [];
+// (x1,y1)→(x2,y2)를 잇는 정적 경사 막대 한 장
+function pushWallLine(slopes: Slope[], x1: number, y1: number, x2: number, y2: number, h = 16): void {
+  slopes.push({
+    x: (x1 + x2) / 2,
+    y: (y1 + y2) / 2,
+    w: Math.hypot(x2 - x1, y2 - y1),
+    h,
+    angle: Math.atan2(y2 - y1, x2 - x1),
+  });
+}
 
-  const finishY = TOP + (ROWS + 1) * ROW_GAP + 60;
-  const height = finishY + 120;
-  const rowY = (r: number) => TOP + (r + 1) * ROW_GAP;
-
-  for (let r = 0; r < ROWS; r++) {
-    const y = rowY(r);
-    // 처음/끝 행, 그리고 약 32% 확률로 장치 행. 나머지는 핀 행.
-    const isDevice = r >= 2 && r < ROWS - 1 && Math.random() < 0.44;
-    if (!isDevice) {
-      pushPegRow(pegs, y, r);
-      continue;
-    }
-
-    const pick = Math.floor(Math.random() * 7);
-    if (pick === 4) {
-      // 점프대: 밟으면 위로 튕겨 큰 포물선 (카오스·역전)
-      const x = innerL + 42 + Math.random() * (innerW - 84);
-      jumppads.push({ x, y, w: 78, h: 22, vy: -13 });
-    } else if (pick === 5) {
-      // 대포: 강하게 대각/아래로 발사 (지름길·역전)
-      const x = innerL + 42 + Math.random() * (innerW - 84);
-      cannons.push({ x, y, w: 70, h: 28, vx: (Math.random() < 0.5 ? 1 : -1) * (5 + Math.random() * 3), vy: 12 });
-    } else if (pick === 6) {
-      // 스플리터: 삼각 쐐기. 흐름을 좌우로 가름.
-      const x = innerL + innerW * (0.3 + Math.random() * 0.4);
-      splitters.push({ x, y, radius: 26, angle: -Math.PI / 2 });
-    } else if (pick === 0) {
-      // 회전 범퍼: 가운데 근처. 길이가 짧아(최대 140) 안쪽 폭(>500)을 못 막으므로
-      // 양옆에 항상 통로가 남는다(별도 핀 보강 불필요).
-      const x = innerL + innerW * (0.3 + Math.random() * 0.4);
-      spinners.push({
-        x, y,
-        length: 110 + Math.random() * 30,
-        thickness: 18,
-        speed: (Math.random() < 0.5 ? 1 : -1) * (0.03 + Math.random() * 0.03),
-        angle: Math.random() * Math.PI,
-      });
-    } else if (pick === 1) {
-      // 부스터 패드 (영역). 가로 전체 안 막음.
-      const x = innerL + 45 + Math.random() * (innerW - 90);
-      boosters.push({ x, y, w: 84, h: 28, fx: (Math.random() - 0.5) * 0.005, fy: 0.015 });
-    } else if (pick === 2) {
-      // 순간이동: 입구 여기, 출구는 아래쪽 랜덤 x. 행 사이(반 칸 오프셋)에 떨궈
-      // 정적 바디에 박히지 않게 한다.
-      const ex = innerL + Math.random() * innerW;
-      const tx = innerL + Math.random() * innerW;
-      const ty = y + ROW_GAP * (2 + Math.floor(Math.random() * 3)) + ROW_GAP / 2;
-      if (ty < finishY - ROW_GAP) {
-        teleports.push({ ex, ey: y, er: 22, tx, ty });
-      } else {
-        pushPegRow(pegs, y, r); // 출구가 너무 아래면 핀 행으로 대체
-      }
-    } else {
-      // 슬로프: 한쪽 벽에서 시작해 반대편에 넓은 통로를 남긴다(가로 전체 차단 금지).
-      const len = innerW * 0.5;
-      const leftSide = Math.random() < 0.5;
-      const cx = leftSide ? innerL + len * 0.45 : innerR - len * 0.45;
-      const angle = (leftSide ? 1 : -1) * (0.26 + Math.random() * 0.16);
-      slopes.push({ x: cx, y, w: len, h: 20, angle });
+function buildPinField(A: Arrays, y0: number, y1: number): void {
+  let r = 0;
+  for (let y = y0 + 60; y < y1 - 20; y += ROW_GAP, r++) {
+    pushPegRow(A.pegs, y, r);
+    if (Math.random() < 0.35) {
+      const x = innerL + 40 + Math.random() * (innerW - 80);
+      const pick = Math.floor(Math.random() * 3);
+      if (pick === 0) A.boosters.push({ x, y, w: 84, h: 28, fx: (Math.random() - 0.5) * 0.005, fy: 0.015 });
+      else if (pick === 1) A.splitters.push({ x, y, radius: 24, angle: -Math.PI / 2 });
+      else A.teleports.push({ ex: x, ey: y, er: 22, tx: innerL + Math.random() * innerW, ty: Math.min(y + ROW_GAP * 2, y1 + ROW_GAP) });
     }
   }
+}
+
+function buildFunnel(A: Arrays, y0: number, y1: number): void {
+  const cx = W / 2 + (Math.random() - 0.5) * 60;
+  const throatY = (y0 + y1) / 2;
+  const throat = 6.4 * BALL_R; // 출구 폭 (파일업 배수 위해 넉넉히)
+  pushWallLine(A.slopes, innerL, y0 + 30, cx - throat / 2, throatY);
+  pushWallLine(A.slopes, innerR, y0 + 30, cx + throat / 2, throatY);
+  for (let y = throatY + 80; y < y1 - 20; y += ROW_GAP) pushPegRow(A.pegs, y, 0);
+}
+
+function buildCanyon(A: Arrays, y0: number, y1: number): void {
+  const shelves = 3;
+  const gap = 6.8 * BALL_R; // 반대편 통로
+  const len = innerW - gap;
+  for (let k = 0; k < shelves; k++) {
+    const y = y0 + 70 + k * ((y1 - y0 - 100) / shelves);
+    const leftSide = k % 2 === 0;
+    const cx = leftSide ? innerL + len / 2 : innerR - len / 2;
+    const angle = (leftSide ? 1 : -1) * (0.17 + Math.random() * 0.07);
+    A.slopes.push({ x: cx, y, w: len, h: 18, angle });
+  }
+}
+
+function buildChamber(A: Arrays, y0: number, y1: number): void {
+  const cy = (y0 + y1) / 2;
+  const ns = 1 + Math.floor(Math.random() * 2);
+  for (let i = 0; i < ns; i++) {
+    const x = innerL + innerW * (0.3 + Math.random() * 0.4);
+    const y = y0 + 90 + Math.random() * (y1 - y0 - 200);
+    A.spinners.push({
+      x, y, length: 108 + Math.random() * 30, thickness: 18,
+      speed: (Math.random() < 0.5 ? 1 : -1) * (0.03 + Math.random() * 0.03), angle: Math.random() * Math.PI,
+    });
+  }
+  const bx = innerL + innerW * (0.25 + Math.random() * 0.5);
+  for (const [ox, oy] of [[0, -42], [-42, 0], [42, 0], [0, 42], [0, 0]]) {
+    A.bumpers.push({ x: bx + ox, y: cy + oy, r: 11 });
+  }
+  pushPegRow(A.pegs, y0 + 34, 0);
+  pushPegRow(A.pegs, y1 - 34, 1);
+  if (Math.random() < 0.5) A.boosters.push({ x: innerL + 45 + Math.random() * (innerW - 90), y: y0 + 64, w: 84, h: 28, fx: (Math.random() - 0.5) * 0.005, fy: 0.015 });
+}
+
+function buildPit(A: Arrays, y0: number, y1: number): void {
+  for (let y = y0 + 80; y < y1 - 50; y += ROW_GAP) {
+    A.pegs.push({ x: innerL + 8 + (Math.random() - 0.5) * 6, y, r: PEG_R });
+    A.pegs.push({ x: innerR - 8 + (Math.random() - 0.5) * 6, y, r: PEG_R });
+  }
+  const x = innerL + 60 + Math.random() * (innerW - 120);
+  const y = y1 - 70;
+  if (Math.random() < 0.5) A.jumppads.push({ x, y, w: 78, h: 22, vy: -13 });
+  else A.cannons.push({ x, y, w: 70, h: 28, vx: (Math.random() < 0.5 ? 1 : -1) * (5 + Math.random() * 3), vy: 12 });
+}
+
+function buildSection(t: SectionId, A: Arrays, y0: number, y1: number): void {
+  if (t === 'pinfield') buildPinField(A, y0, y1);
+  else if (t === 'funnel') buildFunnel(A, y0, y1);
+  else if (t === 'canyon') buildCanyon(A, y0, y1);
+  else if (t === 'chamber') buildChamber(A, y0, y1);
+  else buildPit(A, y0, y1);
+}
+
+// 결승 직전: 모든 공을 좁은 슈트로 합류시키는 그랜드 깔때기 (막판 접전 보장)
+function buildGrandFunnel(A: Arrays, y0: number, finishY: number): void {
+  const cx = W / 2;
+  const chute = 110;
+  const throatY = finishY - 80;
+  pushWallLine(A.slopes, innerL, y0 + 20, cx - chute / 2, throatY, 16);
+  pushWallLine(A.slopes, innerR, y0 + 20, cx + chute / 2, throatY, 16);
+  const H = finishY - throatY + 30;
+  A.slopes.push({ x: cx - chute / 2, y: throatY + H / 2 - 15, w: 16, h: H, angle: 0 });
+  A.slopes.push({ x: cx + chute / 2, y: throatY + H / 2 - 15, w: 16, h: H, angle: 0 });
+}
+
+export function generateCourse(): Course {
+  const A = emptyArrays();
+  const sections: SectionZone[] = [];
+  let y = TOP;
+
+  const add = (t: SectionId) => {
+    const y0 = y, y1 = y + HEIGHT[t];
+    buildSection(t, A, y0, y1);
+    sections.push({ y0, y1, hue: HUE[t], name: NAME[t] });
+    y = y1;
+  };
+
+  add('pinfield'); // 리드인
+  const count = 7 + Math.floor(Math.random() * 3); // 7~9 중간 구간
+  let prev: SectionId = 'pinfield';
+  for (let i = 0; i < count; i++) {
+    let t = MIDDLE[Math.floor(Math.random() * MIDDLE.length)];
+    if (t === prev) t = MIDDLE[(MIDDLE.indexOf(t) + 1) % MIDDLE.length];
+    add(t);
+    prev = t;
+  }
+
+  const finishStart = y;
+  const finishY = y + FINISH_H;
+  buildGrandFunnel(A, finishStart, finishY);
+  sections.push({ y0: finishStart, y1: finishY, hue: HUE.finish, name: NAME.finish });
 
   return {
-    width: W, height, startY: TOP, finishY,
+    width: W, height: finishY + 120, startY: TOP, finishY,
     wallThickness: WALL, ballRadius: BALL_R,
-    pegs, spinners, boosters, teleports, slopes,
-    jumppads, cannons, splitters,
+    ...A, sections,
   };
 }

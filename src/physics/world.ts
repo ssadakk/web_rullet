@@ -29,6 +29,9 @@ export function createWorld(course: Course): PhysicsWorld {
   for (const p of course.pegs) {
     statics.push(Matter.Bodies.circle(p.x, p.y, p.r, { isStatic: true, restitution: 0.6, friction: 0 }));
   }
+  for (const b of course.bumpers) {
+    statics.push(Matter.Bodies.circle(b.x, b.y, b.r, { isStatic: true, restitution: 0.82, friction: 0 }));
+  }
   for (const s of course.slopes) {
     statics.push(Matter.Bodies.rectangle(s.x, s.y, s.w, s.h, {
       isStatic: true, angle: s.angle, restitution: 0.4, friction: 0, chamfer: { radius: 4 },
