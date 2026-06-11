@@ -221,9 +221,13 @@ ui.onStart((cfg) => {
 
     const e = engine!;
     if (!e.isFinished()) {
-      // 발표 후 배경 레이스는 슬로모 없이 빠르게 정리
-      const nearFinish = !announced && e.leaderY() > e.course.finishY - SLOWMO_DIST;
-      acc += frame * (nearFinish ? SLOWMO_SCALE : 1);
+      const lone = e.activeCount() === 1;
+      // 슬로모는 결승 직전 박빙 연출용 — 마지막 공 혼자면 벌칙 모드(꼴찌 도착이 드라마)에만 유지.
+      // 발표 후 배경 레이스는 슬로모 없이 빠르게 정리.
+      const nearFinish = !announced && (!lone || currentMode === 'penalty')
+        && e.leaderY() > e.course.finishY - SLOWMO_DIST;
+      // 마지막 공 혼자 남으면 2배속 — 순위는 이미 확정이라 연출만 빨라진다
+      acc += frame * (nearFinish ? SLOWMO_SCALE : lone ? 2 : 1);
       let steps = 0;
       while (acc >= FIXED_DT && steps < 4 && !e.isFinished()) {
         e.tick(FIXED_DT);

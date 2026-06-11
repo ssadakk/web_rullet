@@ -174,6 +174,13 @@ export class Engine {
   // 역전 강화(고무줄): 뒤처진 공은 아래로 가속, 선두는 살짝 끌어 막판까지 붙인다.
   // 진행도에 비례해 감쇠 — 중반 리드가 의미를 갖고, 그랜드 퍼널부터는 순수 물리로 굳는다.
   private rubberBand(): void {
+    // 마지막 1개 공: 순위가 이미 확정(꼴찌)이라 공정성 손상 없음 — 강하게 끌어내려 늘어짐 방지
+    if (this.world.bodies.size === 1 && this.finishOrder.length > 0) {
+      for (const body of this.world.bodies.values()) {
+        Matter.Body.applyForce(body, body.position, { x: 0, y: 0.0017 * body.mass });
+      }
+      return;
+    }
     if (this.world.bodies.size < 2) return;
     const leaderY = this.leaderY();
     const funnelY = this.funnelY();
