@@ -76,10 +76,17 @@ function emptyArrays(): Arrays {
   return { pegs: [], bumpers: [], spinners: [], boosters: [], teleports: [], slopes: [], jumppads: [], cannons: [], splitters: [] };
 }
 
+// 핀 행을 innerL→innerR 전폭에 균등 배치. 양 끝 핀을 항상 보장해 가장자리 직하 통로를 없앤다.
 function pushPegRow(pegs: Peg[], y: number, r: number): void {
-  const offset = (r % 2) * (PIN_GAP / 2);
-  for (let x = innerL + offset; x <= innerR; x += PIN_GAP) {
+  const cols = Math.round(innerW / PIN_GAP);   // 칸 수
+  const step = innerW / cols;                  // 균등 간격(짝수 행은 양 끝이 innerL/innerR)
+  const stagger = (r % 2) * (step / 2);        // 행 교대 반-칸 엇갈림
+  for (let x = innerL + stagger; x <= innerR + 1; x += step) {
     pegs.push({ x: x + (Math.random() - 0.5) * 8, y: y + (Math.random() - 0.5) * 8, r: PEG_R });
+  }
+  if (stagger > 0) { // 엇갈림 행은 양 끝이 비므로 가장자리 보강 핀 추가
+    pegs.push({ x: innerL, y: y + (Math.random() - 0.5) * 8, r: PEG_R });
+    pegs.push({ x: innerR, y: y + (Math.random() - 0.5) * 8, r: PEG_R });
   }
 }
 
@@ -112,8 +119,9 @@ function buildFunnel(A: Arrays, y0: number, y1: number): void {
   const cx = W / 2 + (Math.random() - 0.5) * 60;
   const throatY = (y0 + y1) / 2;
   const throat = 6.4 * BALL_R; // 출구 폭 (파일업 배수 위해 넉넉히)
-  pushWallLine(A.slopes, innerL, y0 + 30, cx - throat / 2, throatY);
-  pushWallLine(A.slopes, innerR, y0 + 30, cx + throat / 2, throatY);
+  // 벽 면(WALL / W-WALL)에서 시작해 가장자리 직하 통로를 봉쇄
+  pushWallLine(A.slopes, WALL, y0 + 30, cx - throat / 2, throatY);
+  pushWallLine(A.slopes, W - WALL, y0 + 30, cx + throat / 2, throatY);
   for (let y = throatY + 80; y < y1 - 20; y += ROW_GAP) pushPegRow(A.pegs, y, 0);
 }
 
@@ -121,9 +129,10 @@ function buildCanyon(A: Arrays, y0: number, y1: number): void {
   const shelves = 3;
   const gap = 6.8 * BALL_R; // 반대편 통로
   const len = innerW - gap;
+  const startLeft = Math.random() < 0.5; // 시작 방향 랜덤 → 좌우 편향 제거
   for (let k = 0; k < shelves; k++) {
     const y = y0 + 70 + k * ((y1 - y0 - 100) / shelves);
-    const leftSide = k % 2 === 0;
+    const leftSide = (k % 2 === 0) === startLeft;
     const cx = leftSide ? innerL + len / 2 : innerR - len / 2;
     const angle = (leftSide ? 1 : -1) * (0.17 + Math.random() * 0.07);
     A.slopes.push({ x: cx, y, w: len, h: 18, angle });
@@ -132,12 +141,16 @@ function buildCanyon(A: Arrays, y0: number, y1: number): void {
 
 function buildChamber(A: Arrays, y0: number, y1: number): void {
   const cy = (y0 + y1) / 2;
-  const ns = 1 + Math.floor(Math.random() * 2);
+  // 전폭 핀 행을 깔아 세로 레인(특히 벽side)을 차단 — CHAOS 베이스
+  let r = 0;
+  for (let y = y0 + 40; y < y1 - 20; y += ROW_GAP, r++) pushPegRow(A.pegs, y, r);
+  // 회전 범퍼: 폭 전체에 분산 배치(가운데만 막던 문제 해소)
+  const ns = 2 + Math.floor(Math.random() * 2);
   for (let i = 0; i < ns; i++) {
-    const x = innerL + innerW * (0.3 + Math.random() * 0.4);
+    const x = innerL + innerW * ((i + 0.5) / ns) + (Math.random() - 0.5) * 40;
     const y = y0 + 90 + Math.random() * (y1 - y0 - 200);
     A.spinners.push({
-      x, y, length: 108 + Math.random() * 30, thickness: 18,
+      x, y, length: 100 + Math.random() * 26, thickness: 18,
       speed: (Math.random() < 0.5 ? 1 : -1) * (0.03 + Math.random() * 0.03), angle: Math.random() * Math.PI,
     });
   }
@@ -145,8 +158,6 @@ function buildChamber(A: Arrays, y0: number, y1: number): void {
   for (const [ox, oy] of [[0, -42], [-42, 0], [42, 0], [0, 42], [0, 0]]) {
     A.bumpers.push({ x: bx + ox, y: cy + oy, r: 11 });
   }
-  pushPegRow(A.pegs, y0 + 34, 0);
-  pushPegRow(A.pegs, y1 - 34, 1);
   if (Math.random() < 0.5) A.boosters.push({ x: innerL + 45 + Math.random() * (innerW - 90), y: y0 + 64, w: 84, h: 28, fx: (Math.random() - 0.5) * 0.005, fy: 0.015 });
 }
 
@@ -174,8 +185,9 @@ function buildGrandFunnel(A: Arrays, y0: number, finishY: number): void {
   const cx = W / 2;
   const chute = 110;
   const throatY = finishY - 80;
-  pushWallLine(A.slopes, innerL, y0 + 20, cx - chute / 2, throatY, 16);
-  pushWallLine(A.slopes, innerR, y0 + 20, cx + chute / 2, throatY, 16);
+  // 벽 면에서 시작해 모든 공을 슈트로 강제 합류(가장자리 직하 차단)
+  pushWallLine(A.slopes, WALL, y0 + 20, cx - chute / 2, throatY, 16);
+  pushWallLine(A.slopes, W - WALL, y0 + 20, cx + chute / 2, throatY, 16);
   const H = finishY - throatY + 30;
   A.slopes.push({ x: cx - chute / 2, y: throatY + H / 2 - 15, w: 16, h: H, angle: 0 });
   A.slopes.push({ x: cx + chute / 2, y: throatY + H / 2 - 15, w: 16, h: H, angle: 0 });
