@@ -13,14 +13,43 @@ body { margin: 0; font-family: sans-serif; background: #06080f; color: #e6e6e6; 
 .live-title { font-size: 13px; font-weight: bold; margin: 8px 0 0; color: #8aa0c0; }
 #live { font-size: 13px; padding-left: 0; list-style: none; margin: 4px 0 0; }
 #live li { padding: 2px 0; }
+#live li.running { opacity: 0.55; }
 #live .rank { display: inline-block; min-width: 32px; color: #39d0ff; font-weight: bold; }
+#live .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
 .stage { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; background: #06080f; }
-.stage canvas { box-shadow: 0 0 40px rgba(0,0,0,0.6); }
-.overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.65); }
+/* 백킹 버퍼는 DPR배(예 1200x1520)지만 표시는 논리 600x760 비율 유지, 좁으면 축소 */
+.stage canvas { width: 600px; max-width: 100%; height: auto; box-shadow: 0 0 40px rgba(0,0,0,0.6); }
+.overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.45); }
 .overlay.hidden { display: none; }
+.skip { position: absolute; top: 28px; right: 20px; padding: 6px 12px; font-size: 13px; background: rgba(12,15,26,0.85); color: #8aa0c0; border: 1px solid #1b2236; border-radius: 6px; cursor: pointer; }
+.skip:hover { color: #e6e6e6; border-color: #39d0ff; }
+.skip.hidden { display: none; }
+.mute { position: absolute; top: 28px; left: 20px; width: 36px; height: 32px; font-size: 15px; line-height: 1; background: rgba(12,15,26,0.85); border: 1px solid #1b2236; border-radius: 6px; cursor: pointer; }
+.mute:hover { border-color: #39d0ff; }
+.rec { position: absolute; top: 28px; left: 64px; height: 32px; padding: 0 10px; font-size: 12px; font-weight: bold; line-height: 1; color: #8aa0c0; background: rgba(12,15,26,0.85); border: 1px solid #1b2236; border-radius: 6px; cursor: pointer; }
+.rec:hover { border-color: #39d0ff; }
+.rec.on { color: #ff5d5d; border-color: #ff5d5d; }
+.rec.hidden { display: none; }
 .result { background: #0c0f1a; border: 1px solid #1b2236; padding: 24px 40px; border-radius: 12px; text-align: center; max-height: 80vh; overflow-y: auto; box-shadow: 0 0 30px rgba(57,208,255,0.2); }
 .result h2 { color: #39d0ff; }
 .result .big { font-size: 32px; font-weight: bold; }
+.result .big.rolling { color: #8aa0c0; }
+.result .big.reveal { display: inline-block; animation: bigpop 0.42s ease-out; }
+@keyframes bigpop { 0% { transform: scale(0.5); opacity: 0.4; } 60% { transform: scale(1.18); } 100% { transform: scale(1); } }
 .result ol { text-align: left; }
-.result .restart { margin-top: 16px; padding: 8px 20px; font-size: 14px; font-weight: bold; background: #2f6bff; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+.result .restart { margin-top: 16px; margin-right: 8px; padding: 8px 20px; font-size: 14px; font-weight: bold; background: #2f6bff; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
 .result .restart:hover { background: #4a82ff; }
+.result .restart.alt { background: #1b2236; color: #8aa0c0; border: 1px solid #2f3a5c; }
+.result .restart.alt:hover { color: #e6e6e6; border-color: #39d0ff; }
+.result .share-row { margin-top: 12px; display: flex; align-items: center; gap: 8px; justify-content: center; }
+.result .share-msg { font-size: 12px; color: #5affa3; min-height: 14px; }
+
+/* 모바일: 패널을 캔버스 위로 세로 스택 (회식 자리 폰 사용) */
+@media (max-width: 760px) {
+  .layout { flex-direction: column; height: auto; min-height: 100vh; }
+  .panel { width: 100%; border-right: none; border-bottom: 1px solid #1b2236; }
+  .stage { padding: 8px 0; }
+  .skip { top: 12px; right: 10px; }
+  .mute { top: 12px; left: 10px; }
+  .rec { top: 12px; left: 54px; }
+}

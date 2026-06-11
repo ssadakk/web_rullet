@@ -7,10 +7,13 @@ export interface SpinnerBody {
   speed: number;
 }
 
+export interface Hit { x: number; y: number; speed: number }
+
 export interface PhysicsWorld {
   engine: Matter.Engine;
   bodies: Map<BallId, Matter.Body>;
   spinners: SpinnerBody[];
+  hits: Hit[]; // 이번 스텝의 공-장애물 충돌 (SFX용, 매 틱 소비)
 }
 
 export function createWorld(course: Course): PhysicsWorld {
@@ -31,6 +34,10 @@ export function createWorld(course: Course): PhysicsWorld {
   }
   for (const b of course.bumpers) {
     statics.push(Matter.Bodies.circle(b.x, b.y, b.r, { isStatic: true, restitution: 0.82, friction: 0 }));
+  }
+  // 팝 범퍼: 실제 강타는 devices.ts applyPops가 처리, 바디는 터널링 방지용
+  for (const p of course.pops) {
+    statics.push(Matter.Bodies.circle(p.x, p.y, p.r, { isStatic: true, restitution: 0.5, friction: 0 }));
   }
   for (const s of course.slopes) {
     statics.push(Matter.Bodies.rectangle(s.x, s.y, s.w, s.h, {
@@ -54,11 +61,27 @@ export function createWorld(course: Course): PhysicsWorld {
   }
 
   Matter.Composite.add(engine.world, statics);
-  return { engine, bodies: new Map(), spinners };
+
+  const world: PhysicsWorld = { engine, bodies: new Map(), spinners, hits: [] };
+
+  // 공-장애물 충돌을 수집 (SFX 타격음용). 물리엔 영향 없음 — 읽기만.
+  Matter.Events.on(engine, 'collisionStart', (e) => {
+    for (const pair of e.pairs) {
+      const a = pair.bodyA, b = pair.bodyB;
+      const ball = a.label === 'ball' ? a : b.label === 'ball' ? b : null;
+      const other = ball === a ? b : a;
+      if (!ball || other.label === 'ball') continue; // 공-공 충돌은 제외
+      const v = ball.velocity;
+      world.hits.push({ x: ball.position.x, y: ball.position.y, speed: Math.hypot(v.x, v.y) });
+    }
+  });
+
+  return world;
 }
 
 export function spawnBall(world: PhysicsWorld, id: BallId, pos: Vec2, vx: number, radius: number): void {
   const body = Matter.Bodies.circle(pos.x, pos.y, radius, {
+    label: 'ball',
     restitution: 0.42,
     friction: 0,
     frictionAir: 0.004,
