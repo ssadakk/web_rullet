@@ -29,8 +29,8 @@ const SLOWMO_DIST = 240;
 const SLOWMO_SCALE = 0.45;
 const CELEBRATE_MS = 4200;
 const CONFETTI_COLORS = ['#ff3df0', '#39d0ff', '#5affa3', '#ff9b3d', '#ffe14d', '#b46bff'];
-const DEVICE_LABEL: Record<'teleport' | 'jump' | 'cannon' | 'pop', string> = {
-  cannon: '✦ 대포 발사!', jump: '↑ 점프대!', teleport: '⊹ 순간이동!', pop: '★ 팝 강타!',
+const DEVICE_LABEL: Record<'teleport' | 'jump' | 'cannon' | 'pop' | 'trampoline', string> = {
+  cannon: '✦ 대포 발사!', jump: '↑ 점프대!', teleport: '⊹ 순간이동!', pop: '★ 팝 강타!', trampoline: '⤴ 고무줄 반동!',
 };
 
 interface Confetto { x: number; y: number; vx: number; vy: number; rot: number; vr: number; color: string; size: number }

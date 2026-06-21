@@ -7,12 +7,18 @@ export interface SpinnerBody {
   speed: number;
 }
 
+export interface SeesawBody {
+  body: Matter.Body;
+  angularVel: number; // devices.ts updateSeesaws가 적분하는 각속도 (rad/frame)
+}
+
 export interface Hit { x: number; y: number; speed: number }
 
 export interface PhysicsWorld {
   engine: Matter.Engine;
   bodies: Map<BallId, Matter.Body>;
   spinners: SpinnerBody[];
+  seesaws: SeesawBody[];
   hits: Hit[]; // 이번 스텝의 공-장애물 충돌 (SFX용, 매 틱 소비)
 }
 
@@ -39,6 +45,10 @@ export function createWorld(course: Course): PhysicsWorld {
   for (const p of course.pops) {
     statics.push(Matter.Bodies.circle(p.x, p.y, p.r, { isStatic: true, restitution: 0.5, friction: 0 }));
   }
+  // 트램펄린: 실제 반동은 devices.ts applyTrampolines가 처리, 바디는 터널링 방지용(저반발)
+  for (const t of course.trampolines) {
+    statics.push(Matter.Bodies.rectangle(t.x, t.y, t.w, t.h, { isStatic: true, restitution: 0.3, friction: 0, chamfer: { radius: 6 } }));
+  }
   for (const s of course.slopes) {
     statics.push(Matter.Bodies.rectangle(s.x, s.y, s.w, s.h, {
       isStatic: true, angle: s.angle, restitution: 0.4, friction: 0, chamfer: { radius: 4 },
@@ -60,9 +70,19 @@ export function createWorld(course: Course): PhysicsWorld {
     statics.push(body);
   }
 
+  // 시소 판자: 저반발(공이 안착해 기울여야 함). 각도는 updateSeesaws가 매 틱 구동.
+  const seesaws: SeesawBody[] = [];
+  for (const s of course.seesaws) {
+    const body = Matter.Bodies.rectangle(s.x, s.y, s.length, s.thickness, {
+      isStatic: true, angle: s.angle, restitution: 0.2, friction: 0, chamfer: { radius: 4 },
+    });
+    seesaws.push({ body, angularVel: 0 });
+    statics.push(body);
+  }
+
   Matter.Composite.add(engine.world, statics);
 
-  const world: PhysicsWorld = { engine, bodies: new Map(), spinners, hits: [] };
+  const world: PhysicsWorld = { engine, bodies: new Map(), spinners, seesaws, hits: [] };
 
   // 공-장애물 충돌을 수집 (SFX 타격음용). 물리엔 영향 없음 — 읽기만.
   Matter.Events.on(engine, 'collisionStart', (e) => {

@@ -38,20 +38,49 @@ describe('generateCourse 불변식', () => {
       for (const s of c.slopes) {
         // 슬로프 폭이 안쪽 폭보다 좁아 통로가 남는다
         expect(s.w).toBeLessThan(innerWidth);
-        // 완만한 경사판(협곡 선반)은 반폭 이하 — 전폭 판자 회귀 가드.
-        // 깔때기 벽(|angle|≈0.57~0.93)과 수직 슈트 벽(w=16)은 조건에 안 걸린다.
+        // 완만한 가로 경사판 금지 — 지루한 막대 회귀 가드.
+        // 깔때기 벽(|angle|≳0.4)과 수직 칸막이·슈트 벽(w≤16)은 조건에 안 걸린다.
         if (Math.abs(s.angle) < 0.3 && s.w > 20) {
           expect(s.w).toBeLessThanOrEqual(0.55 * innerWidth);
         }
       }
 
-      // 섹션 분산: canyon ≤ 1, 인접 중복 없음, 비-canyon 4종 모두 등장
+      // 시소: 벽 안 + 기울기 상한 (덤프는 되되 수직 낙하 슬로프화 방지)
+      const innerW2 = c.width - 2 * c.wallThickness;
+      for (const s of c.seesaws) {
+        expect(s.x - s.length / 2).toBeGreaterThanOrEqual(c.wallThickness);
+        expect(s.x + s.length / 2).toBeLessThanOrEqual(c.width - c.wallThickness);
+        expect(s.length).toBeLessThanOrEqual(innerW2);
+        expect(s.maxAngle).toBeLessThanOrEqual(0.6);
+        expect(Math.abs(s.angle)).toBeLessThan(s.maxAngle);
+      }
+
+      // 트램펄린: 캡(≤4) + 벽 안 + 위로 튕김(vy<0) + 결승 한참 위
+      expect(c.trampolines.length).toBeLessThanOrEqual(4);
+      for (const t of c.trampolines) {
+        expect(t.x - t.w / 2).toBeGreaterThanOrEqual(c.wallThickness);
+        expect(t.x + t.w / 2).toBeLessThanOrEqual(c.width - c.wallThickness);
+        expect(t.vy).toBeLessThan(0);
+        expect(t.y).toBeLessThan(c.finishY - 150);
+      }
+
+      // 풍차 바(ROTOR): 축이 벽(오프센터)에 있고 두꺼운 막대(WHEEL 16과 구분).
+      // 팔이 코스 폭을 다 덮지 않아 반대쪽에 통로가 남는다(reach=0.8*innerW).
+      const rotors = c.spinners.filter((s) => s.thickness >= 24);
+      for (const s of rotors) {
+        expect(inBoundsX(s.x)).toBe(true);
+        // 피벗이 한쪽 벽에 위치 (코스 중앙이 아님)
+        const nearWall = Math.min(s.x, c.width - s.x) <= c.wallThickness + 1;
+        expect(nearWall).toBe(true);
+        expect(s.length / 2).toBeLessThan(innerW2); // 팔 reach가 내부폭 미만 → 통로 유지
+      }
+
+      // 섹션 분산: 인접 중복 없음, 8종 모두 등장 (셔플 백이 보장)
       const names = c.sections.map((s) => s.name);
-      expect(names.filter((n) => n === 'CANYON').length).toBeLessThanOrEqual(1);
       for (let i = 1; i < names.length; i++) {
         expect(names[i]).not.toBe(names[i - 1]);
       }
-      for (const n of ['PINS', 'FUNNEL', 'CHAOS', 'DROP']) {
+      for (const n of ['PINS', 'CHAOS', 'DROP', 'WHEEL', 'LANES', 'SEESAW', 'ROTOR', 'TRAMPO']) {
         expect(names).toContain(n);
       }
 

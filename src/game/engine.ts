@@ -1,7 +1,7 @@
 import Matter from 'matter-js';
 import type { BallId, BallInit, Vec2 } from '../types';
 import { createWorld, spawnBall, removeBall, step, type PhysicsWorld, type Hit } from '../physics/world';
-import { rotateSpinners, applyBoosters, applyTeleports, applyLaunchers, applyPops, applySpinnerKicks, type DeviceEvent } from './devices';
+import { rotateSpinners, updateSeesaws, applyBoosters, applyTeleports, applyLaunchers, applyTrampolines, applyPops, applySpinnerKicks, type DeviceEvent } from './devices';
 import type { Course } from './course';
 import type { Ball } from './ball';
 import { mulberry32, type Rng } from './rng';
@@ -12,6 +12,7 @@ const EVENT_COLOR: Record<DeviceEvent['kind'], string> = {
   jump: '#41f5a3',
   cannon: '#ff9b3d',
   pop: '#ff5d8f',
+  trampoline: '#ffe14d',
 };
 
 export interface EngineCallbacks {
@@ -32,6 +33,7 @@ export class Engine {
   private finishOrder: BallId[] = [];
   private teleportCd: Map<BallId, number> = new Map();
   private launchCd: Map<BallId, number> = new Map();
+  private trampolineCd: Map<BallId, number> = new Map();
   private popCd: Map<BallId, number> = new Map();
   private kickCd: Map<BallId, number> = new Map();
   private progress: Map<BallId, { bestY: number; sinceMs: number }> = new Map();
@@ -78,6 +80,11 @@ export class Engine {
   // 코스 순서대로 회전 범퍼의 현재 각도
   spinnerAngles(): number[] {
     return this.world.spinners.map((s) => s.body.angle);
+  }
+
+  // 코스 순서대로 시소의 현재 각도
+  seesawAngles(): number[] {
+    return this.world.seesaws.map((s) => s.body.angle);
   }
 
   // 선두(가장 아래) 공의 y. 전부 도착했으면 마지막 값 유지.
@@ -132,6 +139,16 @@ export class Engine {
     return this.world.bodies.size;
   }
 
+  // 일정 시간 이상 하강이 멈춘 공 집합 — 런처(트램펄린·점프대)가 발동을 양보해
+  // antiStuck이 방해 없이 끌어내리게 한다(런처 핑퐁 클로깅의 시드 무관 차단).
+  private stuckSet(thresholdMs: number): Set<BallId> {
+    const s = new Set<BallId>();
+    for (const [id, p] of this.progress) {
+      if (this.elapsed - p.sinceMs > thresholdMs) s.add(id);
+    }
+    return s;
+  }
+
   // 아래로 진행이 멈춘 공을 정체 시간에 비례해 점점 세게 쳐서 반드시 풀어준다.
   private antiStuck(): void {
     for (const [id, body] of this.world.bodies) {
@@ -177,14 +194,27 @@ export class Engine {
     // 마지막 1개 공: 순위가 이미 확정(꼴찌)이라 공정성 손상 없음 — 강하게 끌어내려 늘어짐 방지
     if (this.world.bodies.size === 1 && this.finishOrder.length > 0) {
       for (const body of this.world.bodies.values()) {
-        Matter.Body.applyForce(body, body.position, { x: 0, y: 0.0017 * body.mass });
+        Matter.Body.applyForce(body, body.position, { x: 0, y: 0.0025 * body.mass });
       }
       return;
     }
     if (this.world.bodies.size < 2) return;
     const leaderY = this.leaderY();
     const funnelY = this.funnelY();
-    if (leaderY >= funnelY) return;
+    // 막판 압축(결승 720px 전부터): 뒤처진 공을 아래로 강하게 끌어 선두 깊이로 모은다.
+    // FINAL(400px)만으론 유입 산포를 다 못 줄여 → 활주로를 직전 구간까지 늘려 photo finish.
+    // 공을 멈추거나 띄우지 않고 '당기기만' 하므로 드레인 꼬리를 죽이되 정체를 안 만든다.
+    // 공정: 거리비례 대칭(특정 공 편애 없음). 막판 순위는 압축된 공떼의 범퍼 셔플로 결정.
+    if (leaderY >= this.course.finishY - 720) {
+      for (const body of this.world.bodies.values()) {
+        const behind = leaderY - body.position.y; // 양수 = 뒤처짐
+        if (behind > 24) {
+          const boost = Math.min(behind / 240, 1) * 0.0034 * body.mass;
+          Matter.Body.applyForce(body, body.position, { x: 0, y: boost });
+        }
+      }
+      return;
+    }
     const progress = Math.max(0, Math.min(1,
       (leaderY - this.course.startY) / (funnelY - this.course.startY)));
     const boostScale = 1 - progress * 0.85;
@@ -218,10 +248,13 @@ export class Engine {
     this.elapsed += deltaMs;
 
     rotateSpinners(this.world, deltaMs);
+    updateSeesaws(this.world, this.course, deltaMs);
     applyBoosters(this.world, this.course);
+    const stuck = this.stuckSet(700); // 700ms+ 정체 공: 런처 양보 대상
     const events: DeviceEvent[] = [
       ...applyTeleports(this.world, this.course, this.teleportCd, this.elapsed, this.rng),
-      ...applyLaunchers(this.world, this.course, this.launchCd, this.elapsed, this.rng),
+      ...applyLaunchers(this.world, this.course, this.launchCd, this.elapsed, this.rng, stuck),
+      ...applyTrampolines(this.world, this.course, this.trampolineCd, this.elapsed, this.rng, stuck),
       ...applyPops(this.world, this.course, this.popCd, this.elapsed),
       ...applySpinnerKicks(this.world, this.course, this.kickCd, this.elapsed),
     ];
@@ -240,6 +273,7 @@ export class Engine {
     for (const e of events) {
       this.particles.burst(e.x, e.y, EVENT_COLOR[e.kind], e.kind === 'teleport' ? 12 : 16, 5);
       if (e.kind === 'cannon') this.shakeImpulse = Math.max(this.shakeImpulse, 11);
+      else if (e.kind === 'trampoline') this.shakeImpulse = Math.max(this.shakeImpulse, 9);
       else if (e.kind === 'jump') this.shakeImpulse = Math.max(this.shakeImpulse, 7);
       else if (e.kind === 'pop') this.shakeImpulse = Math.max(this.shakeImpulse, 6);
     }

@@ -18,6 +18,8 @@ export interface Slope { x: number; y: number; w: number; h: number; angle: numb
 export interface JumpPad { x: number; y: number; w: number; h: number; vy: number }
 export interface Cannon { x: number; y: number; w: number; h: number; vx: number; vy: number }
 export interface Splitter { x: number; y: number; radius: number; angle: number }
+export interface Seesaw { x: number; y: number; length: number; thickness: number; maxAngle: number; angle: number } // angle: 초기(휴지) 기울기
+export interface Trampoline { x: number; y: number; w: number; h: number; vy: number } // 고무줄 반동: 위에서 닿으면 강하게 위로 튕김
 export interface SectionZone { y0: number; y1: number; hue: number; name: string }
 
 export interface Course {
@@ -38,6 +40,8 @@ export interface Course {
   jumppads: JumpPad[];
   cannons: Cannon[];
   splitters: Splitter[];
+  seesaws: Seesaw[];
+  trampolines: Trampoline[];
   sections: SectionZone[];
 }
 
@@ -52,6 +56,8 @@ interface Arrays {
   jumppads: JumpPad[];
   cannons: Cannon[];
   splitters: Splitter[];
+  seesaws: Seesaw[];
+  trampolines: Trampoline[];
 }
 
 const W = 600;
@@ -66,12 +72,11 @@ const innerL = WALL + 24;
 const innerR = W - WALL - 24;
 const innerW = innerR - innerL;
 
-type SectionId = 'pinfield' | 'funnel' | 'canyon' | 'chamber' | 'pit';
-// canyon은 백에서 제외 — 별도로 코스당 최대 1개만 삽입 (지루한 경사판 빈도 축소)
-const BAG: SectionId[] = ['pinfield', 'funnel', 'chamber', 'pit'];
+type SectionId = 'pinfield' | 'chamber' | 'pit' | 'drum' | 'lanes' | 'seesaw' | 'rotor' | 'trampo';
+const BAG: SectionId[] = ['pinfield', 'chamber', 'pit', 'drum', 'lanes', 'seesaw', 'rotor', 'trampo'];
 
 const HEIGHT: Record<SectionId, number> = {
-  pinfield: 360, funnel: 380, canyon: 400, chamber: 420, pit: 320,
+  pinfield: 360, chamber: 420, pit: 320, drum: 440, lanes: 400, seesaw: 360, rotor: 420, trampo: 380,
 };
 
 // 반전(상승) 요소 예산. engine.ts antiStuck(350ms 정체 시 강제 하강)이 무한 바운스를
@@ -80,20 +85,21 @@ const MAX_JUMPPADS = 3;
 const MAX_POPS = 4;
 const MAX_UPDRAFTS = 1;
 const MAX_KICKERS = 2;
+const MAX_TRAMPOLINES = 4; // 고무줄 반동 캡 — 무한 바운스 방지 (race.sim 30초 가드 전제)
 
 const updraftCount = (A: Arrays): number => A.boosters.filter((b) => b.fy < 0).length;
 const kickerCount = (A: Arrays): number => A.spinners.filter((s) => s.kick).length;
 const FINISH_H = 400;
 
 const HUE: Record<string, number> = {
-  pinfield: 190, funnel: 350, canyon: 275, chamber: 32, pit: 150, finish: 318,
+  pinfield: 190, chamber: 32, pit: 150, drum: 275, lanes: 60, seesaw: 215, rotor: 300, trampo: 95, finish: 318,
 };
 const NAME: Record<string, string> = {
-  pinfield: 'PINS', funnel: 'FUNNEL', canyon: 'CANYON', chamber: 'CHAOS', pit: 'DROP', finish: 'FINAL',
+  pinfield: 'PINS', chamber: 'CHAOS', pit: 'DROP', drum: 'WHEEL', lanes: 'LANES', seesaw: 'SEESAW', rotor: 'ROTOR', trampo: 'TRAMPO', finish: 'FINAL',
 };
 
 function emptyArrays(): Arrays {
-  return { pegs: [], bumpers: [], pops: [], spinners: [], boosters: [], teleports: [], slopes: [], jumppads: [], cannons: [], splitters: [] };
+  return { pegs: [], bumpers: [], pops: [], spinners: [], boosters: [], teleports: [], slopes: [], jumppads: [], cannons: [], splitters: [], seesaws: [], trampolines: [] };
 }
 
 function shuffled<T>(arr: readonly T[]): T[] {
@@ -119,15 +125,12 @@ function pushPegRow(pegs: Peg[], y: number, r: number): void {
   }
 }
 
-// (x1,y1)→(x2,y2)를 잇는 정적 경사 막대 한 장
-function pushWallLine(slopes: Slope[], x1: number, y1: number, x2: number, y2: number, h = 16): void {
-  slopes.push({
-    x: (x1 + x2) / 2,
-    y: (y1 + y2) / 2,
-    w: Math.hypot(x2 - x1, y2 - y1),
-    h,
-    angle: Math.atan2(y2 - y1, x2 - x1),
-  });
+// 벽에 축을 둔 풍차 팔: 피벗을 벽(코스 밖)에 두고 한 팔이 코스 안으로 쓸고 들어온다.
+// 대칭 막대라 절반은 벽 뒤로 가려진다. reach = 코스 안으로 뻗는 길이.
+// 끝 선속도(reach*|speed|)가 MAX_BALL_SPEED(11)보다 작아야 터널링 안전.
+function pushWindmill(A: Arrays, leftSide: boolean, cy: number, reach: number, thickness: number, speed: number): void {
+  const pivotX = leftSide ? WALL : W - WALL;
+  A.spinners.push({ x: pivotX, y: cy, length: reach * 2, thickness, speed, angle: crng() * Math.PI });
 }
 
 function buildPinField(A: Arrays, y0: number, y1: number): void {
@@ -157,49 +160,152 @@ function buildPinField(A: Arrays, y0: number, y1: number): void {
   }
 }
 
-function buildFunnel(A: Arrays, y0: number, y1: number): void {
-  const cx = W / 2 + (crng() - 0.5) * 60;
-  const throatY = (y0 + y1) / 2;
-  const throat = 6.4 * BALL_R; // 출구 폭 (파일업 배수 위해 넉넉히)
-  // 벽 면(WALL / W-WALL)에서 시작해 가장자리 직하 통로를 봉쇄
-  pushWallLine(A.slopes, WALL, y0 + 30, cx - throat / 2, throatY);
-  pushWallLine(A.slopes, W - WALL, y0 + 30, cx + throat / 2, throatY);
-  for (let y = throatY + 80; y < y1 - 20; y += ROW_GAP) pushPegRow(A.pegs, y, 0);
+// 룰렛 드럼: 같은 중심에 스피너 3개를 60°씩 어긋나게 겹쳐 6날 휠 구성.
+// 휠이 무작위 타이밍에 사방으로 튕겨낸다 (복불복).
+function buildDrum(A: Arrays, y0: number, _y1: number): void {
+  const cx = W / 2 + (crng() - 0.5) * 40;
+  const cy = y0 + 270;
+  const L = 190;
+  // 깔때기 대신: 상단 전폭 스태거 핀 2행으로 산란 + 벽쪽 직하 통로 봉쇄
+  pushPegRow(A.pegs, y0 + 44, 0);
+  pushPegRow(A.pegs, y0 + 130, 1);
+  // 휠 양옆 벽 구역에 범퍼를 둬 공이 휠 쪽으로 흘러들게 유도
+  A.bumpers.push({ x: innerL + 26, y: cy, r: 12 });
+  A.bumpers.push({ x: innerR - 26, y: cy, r: 12 });
+  const speed = (crng() < 0.5 ? 1 : -1) * (0.028 + crng() * 0.016);
+  const phase = crng() * Math.PI;
+  for (let i = 0; i < 3; i++) {
+    A.spinners.push({ x: cx, y: cy, length: L, thickness: 16, speed, angle: phase + (i * Math.PI) / 3 });
+  }
 }
 
-function buildCanyon(A: Arrays, y0: number, y1: number): void {
-  const shelves = 2;
-  const len = innerW * 0.5; // 반폭 선반: 옆 절반은 그냥 통과, 타면 흘러내림 — 경로 분기
-  const startLeft = crng() < 0.5; // 시작 방향 랜덤 → 좌우 편향 제거
-  let lastLeft = startLeft;
-  for (let k = 0; k < shelves; k++) {
-    const y = y0 + 70 + k * ((y1 - y0 - 100) / shelves);
-    const leftSide = (k % 2 === 0) === startLeft;
-    const cx = leftSide ? innerL + len / 2 : innerR - len / 2;
-    const angle = (leftSide ? 1 : -1) * (0.17 + crng() * 0.07);
-    A.slopes.push({ x: cx, y, w: len, h: 18, angle });
-    lastLeft = leftSide;
+// 레인 복불복: 세로 칸막이로 3개 레인 분할, 레인마다 운명이 다르다.
+// 가속(부스터) / 저속(핀 밀집) / 도박(텔레포트 → 무작위 레인 하단) — 진입이 곧 추첨.
+function buildLanes(A: Arrays, y0: number, y1: number): void {
+  const n = 3;
+  const top = y0 + 80;
+  const bot = y1 - 60;
+  const laneW = innerW / n;
+  pushPegRow(A.pegs, y0 + 40, 1); // 진입 산란: 어느 레인에 빠질지 랜덤화
+  for (let i = 1; i < n; i++) {
+    const x = innerL + laneW * i;
+    A.slopes.push({ x, y: (top + bot) / 2, w: 14, h: bot - top, angle: 0 });
+    A.splitters.push({ x, y: top - 12, radius: 13, angle: -Math.PI / 2 }); // 칸막이 위 분배 삼각형
   }
-  // 마지막 선반의 열린 쪽 아래 반전 장치: 미끄러져 내려온 공이 위로 솟구친다
-  if (crng() < 0.6) {
-    const x = lastLeft ? innerR - len / 2 : innerL + len / 2;
-    if (crng() < 0.5 && A.jumppads.length < MAX_JUMPPADS) {
-      A.jumppads.push({ x, y: y1 - 50, w: 78, h: 22, vy: -13 });
-    } else if (updraftCount(A) < MAX_UPDRAFTS) {
-      A.boosters.push({ x, y: y1 - 90, w: 90, h: 120, fx: 0, fy: -0.0012 }); // 상승 기류
+  // 외측 레인(0·n-1)의 물리 경계는 칸막이가 아니라 벽 면 — 기하 1/3이 아닌 실제 레인
+  // 중심/폭을 써야 벽쪽 무장애 직하 통로(레인 페널티 우회)가 생기지 않는다.
+  const laneBounds = (i: number) => ({
+    l: i === 0 ? WALL : innerL + laneW * i,
+    r: i === n - 1 ? W - WALL : innerL + laneW * (i + 1),
+  });
+  const laneCx = (i: number) => { const b = laneBounds(i); return (b.l + b.r) / 2; };
+  const kinds = shuffled(['fast', 'slow', 'gamble'] as const);
+  for (let i = 0; i < n; i++) {
+    const { l: laneL, r: laneR } = laneBounds(i);
+    const cxLane = (laneL + laneR) / 2;
+    const kind = kinds[i];
+    if (kind === 'fast') {
+      const bw = laneR - laneL - 24; // 벽/칸막이까지 거의 가득 — 벽쪽 비부스트 통로 제거
+      A.boosters.push({ x: cxLane, y: top + (bot - top) * 0.3, w: bw, h: 26, fx: 0, fy: 0.015 });
+      A.boosters.push({ x: cxLane, y: top + (bot - top) * 0.7, w: bw, h: 26, fx: 0, fy: 0.015 });
+    } else if (kind === 'slow') {
+      // 핀 밀집: 레인 물리 폭 전체에 스태거 배치. 벽 면 쪽은 공 반지름만,
+      // 칸막이 쪽은 24px 클리어런스로 쐐기 포켓 방지.
+      const pl = i === 0 ? WALL + BALL_R + 2 : laneL + 24;
+      const pr = i === n - 1 ? W - WALL - BALL_R - 2 : laneR - 24;
+      const cols = Math.max(2, Math.round((pr - pl) / 50));
+      const stepX = (pr - pl) / cols;
+      let r = 0;
+      for (let y = top + 36; y < bot - 24; y += 60, r++) {
+        const off = r % 2 === 0 ? 0 : stepX / 2;
+        for (let x = pl + off; x <= pr + 0.5; x += stepX) {
+          A.pegs.push({ x: x + (crng() - 0.5) * 6, y: y + (crng() - 0.5) * 6, r: PEG_R });
+        }
+      }
+    } else {
+      const exitLane = Math.floor(crng() * n);
+      A.teleports.push({
+        ex: cxLane, ey: top + (bot - top) * 0.45, er: 20,
+        tx: laneCx(exitLane), ty: bot + 24,
+      });
     }
   }
+}
+
+// 시소 덤프: 거의 전폭 판자에 공이 쌓이면 무게 쏠린 쪽으로 기울어 한쪽으로 쏟아낸다.
+// 판자 기울기는 devices.ts updateSeesaws가 공 배치 기반으로 키네마틱하게 구동.
+function buildSeesaw(A: Arrays, y0: number, y1: number): void {
+  const cx = W / 2 + (crng() - 0.5) * 50;
+  const pivotY = y0 + 190;
+  // 깔때기 대신 판자를 거의 전폭으로 확대 — 공이 바로 판자에 안착, 덤프가 커진다
+  A.seesaws.push({
+    x: cx, y: pivotY, length: 440, thickness: 14, maxAngle: 0.45,
+    angle: (crng() < 0.5 ? 1 : -1) * (0.05 + crng() * 0.04), // 휴지 바이어스: 도착한 공이 낮은 쪽으로 구른다
+  });
+  // 판자 양 끝과 벽 사이(약 33px) 직하 통로를 벽쪽 플랭킹 핀으로 봉쇄
+  for (const dy of [-70, 0, 70]) {
+    A.pegs.push({ x: innerL + 6, y: pivotY + dy, r: PEG_R });
+    A.pegs.push({ x: innerR - 6, y: pivotY + dy, r: PEG_R });
+  }
+  pushPegRow(A.pegs, y1 - 50, 0); // 쏟아진 공 분산
+}
+
+// 거대 풍차 바: 한쪽 벽에 축을 둔 큰 팔이 코스 폭의 ~80%를 쓸며 느리게 회전.
+// 수평으로 들어올 때 공을 크게 쳐내 비대칭 역전을 만든다 (윈드밀).
+function buildRotor(A: Arrays, y0: number, y1: number): void {
+  const cy = (y0 + y1) / 2;
+  const leftSide = crng() < 0.5;
+  pushPegRow(A.pegs, y0 + 44, 0); // 진입 산란
+  const reach = innerW * 0.8;
+  // 끝 선속도 ≈ 406*0.019 ≈ 7.7px/frame < MAX_BALL_SPEED(11)
+  pushWindmill(A, leftSide, cy, reach, 26, (crng() < 0.5 ? 1 : -1) * (0.013 + crng() * 0.006));
+  // 팔이 닿지 않는 반대쪽 벽 구역만 봉쇄 핀
+  const farX = leftSide ? innerR - 6 : innerL + 6;
+  for (const dy of [-60, 20, 100]) A.pegs.push({ x: farX, y: cy + dy, r: PEG_R });
+  // 하단 결승 직전 반동: 35% 확률 트램펄린 1개
+  if (crng() < 0.35 && A.trampolines.length < MAX_TRAMPOLINES) {
+    A.trampolines.push({ x: innerL + 80 + crng() * (innerW - 160), y: y1 - 46, w: 96, h: 18, vy: -13 });
+  }
+}
+
+// 독립 트램펄린 구간: 트램펄린 2개를 좌우 지그재그로 — 공이 크게 튕기며 내려가 순위 격변.
+// 중력+수평 킥으로 결국 하강 보장. 트램펄린 위엔 핀을 두지 않는다(튕긴 공이 핀에 막혀
+// 다시 떨어지는 핑퐁 포켓 방지). 벽쪽 직하 통로만 봉쇄 + 바닥 분산.
+function buildTrampo(A: Arrays, y0: number, y1: number): void {
+  const leftFirst = crng() < 0.5;
+  const xL = innerL + innerW * 0.30;
+  const xR = innerL + innerW * 0.70;
+  const yA = y0 + 130, yB = y0 + 270;
+  const slots: { x: number; y: number }[] = leftFirst
+    ? [{ x: xL, y: yA }, { x: xR, y: yB }]
+    : [{ x: xR, y: yA }, { x: xL, y: yB }];
+  for (const s of slots) {
+    if (A.trampolines.length >= MAX_TRAMPOLINES) break;
+    A.trampolines.push({ x: s.x, y: s.y, w: 104, h: 18, vy: -13 });
+  }
+  // 벽쪽 직하 통로만 핀 컬럼으로 봉쇄 (트램펄린 위/사이엔 핀 없음)
+  for (const dy of [40, 130, 220]) {
+    A.pegs.push({ x: innerL + 6, y: y0 + dy, r: PEG_R });
+    A.pegs.push({ x: innerR - 6, y: y0 + dy, r: PEG_R });
+  }
+  pushPegRow(A.pegs, y1 - 45, 0); // 바닥 출구 분산
 }
 
 function buildChamber(A: Arrays, y0: number, y1: number): void {
   // 전폭 핀 행을 깔아 세로 레인(특히 벽side)을 차단 — CHAOS 베이스
   let r = 0;
   for (let y = y0 + 40; y < y1 - 20; y += ROW_GAP, r++) pushPegRow(A.pegs, y, r);
-  // 회전 범퍼: 폭 전체에 분산 배치(가운데만 막던 문제 해소). 첫 번째는 50% 확률로 배팅 스피너.
+  // 회전 범퍼: 폭 전체에 분산. 일부는 벽에 축을 둔 풍차 팔(오프센터)로 더 불규칙하게.
+  // 첫 번째 미드코트 스피너는 50% 확률로 배팅 스피너.
   const ns = 2 + Math.floor(crng() * 2);
   for (let i = 0; i < ns; i++) {
-    const x = innerL + innerW * ((i + 0.5) / ns) + (crng() - 0.5) * 40;
     const y = y0 + 90 + crng() * (y1 - y0 - 200);
+    if (crng() < 0.35) {
+      // 벽 풍차: 끝 선속도 ≈ 229*0.022 ≈ 5px/frame < 11
+      pushWindmill(A, crng() < 0.5, y, innerW * 0.45, 18, (crng() < 0.5 ? 1 : -1) * (0.014 + crng() * 0.008));
+      continue;
+    }
+    const x = innerL + innerW * ((i + 0.5) / ns) + (crng() - 0.5) * 40;
     const kick = i === 0 && crng() < 0.5 && kickerCount(A) < MAX_KICKERS;
     A.spinners.push({
       x, y, length: 100 + crng() * 26, thickness: 18,
@@ -240,8 +346,10 @@ function buildPit(A: Arrays, y0: number, y1: number): void {
   }
   const x = innerL + 60 + crng() * (innerW - 120);
   const y = y1 - 70;
-  if (crng() < 0.3 && updraftCount(A) < MAX_UPDRAFTS) {
+  if (crng() < 0.25 && updraftCount(A) < MAX_UPDRAFTS) {
     A.boosters.push({ x, y: y - 30, w: 90, h: 120, fx: 0, fy: -0.0012 }); // 상승 기류 기둥
+  } else if (crng() < 0.4 && A.trampolines.length < MAX_TRAMPOLINES) {
+    A.trampolines.push({ x, y: y - 24, w: 96, h: 18, vy: -13 }); // 결승 직전 반동
   } else if (crng() < 0.7 && A.jumppads.length < MAX_JUMPPADS) {
     A.jumppads.push({ x, y, w: 78, h: 22, vy: -13 });
   } else {
@@ -251,23 +359,35 @@ function buildPit(A: Arrays, y0: number, y1: number): void {
 
 function buildSection(t: SectionId, A: Arrays, y0: number, y1: number): void {
   if (t === 'pinfield') buildPinField(A, y0, y1);
-  else if (t === 'funnel') buildFunnel(A, y0, y1);
-  else if (t === 'canyon') buildCanyon(A, y0, y1);
   else if (t === 'chamber') buildChamber(A, y0, y1);
+  else if (t === 'drum') buildDrum(A, y0, y1);
+  else if (t === 'lanes') buildLanes(A, y0, y1);
+  else if (t === 'seesaw') buildSeesaw(A, y0, y1);
+  else if (t === 'rotor') buildRotor(A, y0, y1);
+  else if (t === 'trampo') buildTrampo(A, y0, y1);
   else buildPit(A, y0, y1);
 }
 
-// 결승 직전: 모든 공을 좁은 슈트로 합류시키는 그랜드 깔때기 (막판 접전 보장)
-function buildGrandFunnel(A: Arrays, y0: number, finishY: number): void {
-  const cx = W / 2;
-  const chute = 110;
-  const throatY = finishY - 80;
-  // 벽 면에서 시작해 모든 공을 슈트로 강제 합류(가장자리 직하 차단)
-  pushWallLine(A.slopes, WALL, y0 + 20, cx - chute / 2, throatY, 16);
-  pushWallLine(A.slopes, W - WALL, y0 + 20, cx + chute / 2, throatY, 16);
-  const H = finishY - throatY + 30;
-  A.slopes.push({ x: cx - chute / 2, y: throatY + H / 2 - 15, w: 16, h: H, angle: 0 });
-  A.slopes.push({ x: cx + chute / 2, y: throatY + H / 2 - 15, w: 16, h: H, angle: 0 });
+// 전폭 폭포 결승 (CASCADE): 좁은 슈트(외줄 대기=드레인 꼬리의 원인)를 폐기하고 공이 멈추지
+// 않고 전폭으로 흐르게 한다. engine.ts rubberBand의 'FINAL 막판 압축'이 뒤처진 공을 선두
+// 깊이로 끌어모아 photo finish를 만들고(꼬리 제거), 여기 범퍼 셔플이 압축된 공떼의 좌우
+// 위치를 흔들어 도착 직전 순위를 뒤섞는다(박진감). 상향 발사 없음 → 꼬리를 늘리지 않음.
+function buildCascadeFinish(A: Arrays, y0: number, _finishY: number): void {
+  // 1. 가장자리 핀 컬럼 — 벽 직하 우회 봉쇄 (FINAL 전 구간)
+  for (const dy of [40, 110, 180, 250, 320]) {
+    A.pegs.push({ x: innerL + 6, y: y0 + dy, r: PEG_R });
+    A.pegs.push({ x: innerR - 6, y: y0 + dy, r: PEG_R });
+  }
+  // 2. 진입 산란 — 상류 공떼를 전폭으로 펼쳐 한 점 합류(외줄)를 원천 차단
+  pushPegRow(A.pegs, y0 + 40, 0);
+  // 3. 좌우 윈드밀 2개 — 압축된 공떼를 막판에 휘저어 선두 순위를 마지막까지 흔든다(횡스윕,
+  //    상향 발사 아님 → 꼬리 영향 작음). 끝속도 200*0.02=4 < 11.
+  pushWindmill(A, true, y0 + 175, 200, 14, 0.02);
+  pushWindmill(A, false, y0 + 175, 200, 14, -0.02);
+  // 4. 막판 셔플 범퍼 — 윗행(중간 셔플) + 결승선 바로 위 행(도착 직전 스크램블 → 접전).
+  for (const x of [130, 250, 370, 490]) A.bumpers.push({ x, y: y0 + 120, r: 11 });
+  for (const x of [190, 310, 430]) A.bumpers.push({ x, y: y0 + 330, r: 11 });
+  // 5. 결승선 직전 짧은 자유 구간(y0+345 ~ finishY) — 스크램블된 공떼가 전폭으로 동시 통과.
 }
 
 export function generateCourse(seed?: number): Course {
@@ -285,26 +405,23 @@ export function generateCourse(seed?: number): Course {
   };
 
   add('pinfield'); // 리드인
-  // 셔플 백: 섞은 BAG(4종)를 이어붙여 같은 타입 뭉침을 막고 모든 타입 등장을 보장.
-  // canyon은 백에서 빼고 60% 확률로 코스당 1개만 임의 위치에 삽입.
-  const count = 7 + Math.floor(crng() * 3); // 7~9 중간 구간
-  const includeCanyon = crng() < 0.6;
-  const need = count - (includeCanyon ? 1 : 0);
+  // 셔플 백: 섞은 BAG(8종)를 이어붙여 같은 타입 뭉침을 막고 모든 타입 등장을 보장.
+  // count = 8 → 정확히 첫 셔플 백 한 바퀴로 8종 모두 1회씩 등장(코스 길이·시간 제어).
+  const count = 8; // 중간 구간 8개 (8종 전부)
   const seq: SectionId[] = [];
   let last: SectionId = 'pinfield'; // 리드인과의 인접 중복 방지
-  while (seq.length < need) {
+  while (seq.length < count) {
     const bag = shuffled(BAG);
     if (bag[0] === last) [bag[0], bag[1]] = [bag[1], bag[0]]; // 백 경계 중복 해소
     seq.push(...bag);
     last = seq[seq.length - 1];
   }
-  seq.length = need;
-  if (includeCanyon) seq.splice(Math.floor(crng() * (need + 1)), 0, 'canyon');
+  seq.length = count;
   for (const t of seq) add(t);
 
   const finishStart = y;
   const finishY = y + FINISH_H;
-  buildGrandFunnel(A, finishStart, finishY);
+  buildCascadeFinish(A, finishStart, finishY);
   sections.push({ y0: finishStart, y1: finishY, hue: HUE.finish, name: NAME.finish });
 
   return {

@@ -13,7 +13,7 @@ const KICK_COOLDOWN_MS = 500;
 export interface DeviceEvent {
   x: number;
   y: number;
-  kind: 'teleport' | 'jump' | 'cannon' | 'pop';
+  kind: 'teleport' | 'jump' | 'cannon' | 'pop' | 'trampoline';
   ballId: BallId;
 }
 
@@ -22,6 +22,44 @@ export function rotateSpinners(world: PhysicsWorld, deltaMs: number): void {
   const k = deltaMs / BASE_DT;
   for (const s of world.spinners) {
     Matter.Body.setAngle(s.body, s.body.angle + s.speed * k);
+  }
+}
+
+// 시소: 판자 위 공들의 레버암 합 → 각가속 → 각속도 적분(감쇠·상한) → 각도 클램프.
+// constraint 없이 코드로 구동해 스피너와 같은 결정론 패턴을 유지한다.
+const SEESAW_TILT = 1.6e-5;   // 레버암 px당 각가속 (rad/frame²) — 공 1개로 ~0.7s 내 덤프
+const SEESAW_RETURN = 0.002;  // 빈 판자 휴지 각도 복원 스프링
+const SEESAW_DAMP = 0.95;     // 프레임당 각속도 감쇠
+const SEESAW_MAX_W = 0.045;   // 각속도 상한 — 판자 끝 선속도 ≈ 6px/frame < 터널링 한계
+
+export function updateSeesaws(world: PhysicsWorld, course: Course, deltaMs: number): void {
+  const k = deltaMs / BASE_DT;
+  for (let i = 0; i < course.seesaws.length; i++) {
+    const spec = course.seesaws[i];
+    const sw = world.seesaws[i];
+    if (!sw) continue;
+    const angle = sw.body.angle;
+    const dirX = Math.cos(angle);
+    const dirY = Math.sin(angle);
+    let accel = 0;
+    let loaded = false;
+    for (const body of world.bodies.values()) {
+      const rx = body.position.x - spec.x;
+      const ry = body.position.y - spec.y;
+      const along = rx * dirX + ry * dirY;  // 판자 축 방향 레버암
+      const perp = -rx * dirY + ry * dirX;  // 축 직각 (음수 = 판자 위쪽)
+      if (Math.abs(along) > spec.length / 2 + course.ballRadius) continue;
+      if (perp > 0 || perp < -(spec.thickness / 2 + course.ballRadius + 6)) continue;
+      accel += along * SEESAW_TILT;
+      loaded = true;
+    }
+    if (!loaded) accel = (spec.angle - angle) * SEESAW_RETURN; // 빈 판자: 휴지 바이어스로 복원
+    sw.angularVel = (sw.angularVel + accel * k) * Math.pow(SEESAW_DAMP, k);
+    sw.angularVel = Math.max(-SEESAW_MAX_W, Math.min(SEESAW_MAX_W, sw.angularVel));
+    let next = angle + sw.angularVel * k;
+    if (next > spec.maxAngle) { next = spec.maxAngle; sw.angularVel = 0; }
+    else if (next < -spec.maxAngle) { next = -spec.maxAngle; sw.angularVel = 0; }
+    Matter.Body.setAngle(sw.body, next);
   }
 }
 
@@ -75,11 +113,13 @@ export function applyLaunchers(
   cooldown: Map<BallId, number>,
   elapsedMs: number,
   rng: Rng,
+  stuck: Set<BallId>,
 ): DeviceEvent[] {
   const events: DeviceEvent[] = [];
   if (course.jumppads.length === 0 && course.cannons.length === 0) return events;
   for (const [id, body] of world.bodies) {
     if (elapsedMs - (cooldown.get(id) ?? -Infinity) < LAUNCH_COOLDOWN_MS) continue;
+    if (stuck.has(id)) continue; // 정체 공은 런처가 양보 — antiStuck이 끌어내리게
     let fired = false;
     for (const j of course.jumppads) {
       if (inRect(body.position, j.x, j.y, j.w, j.h)) {
@@ -98,6 +138,37 @@ export function applyLaunchers(
         events.push({ x: c.x, y: c.y, kind: 'cannon', ballId: id });
         break;
       }
+    }
+  }
+  return events;
+}
+
+// 트램펄린(고무줄 반동): 위에서 닿으면 점프대보다 강하게 위로 튕긴다. 쿨다운으로 재발동 방지.
+export function applyTrampolines(
+  world: PhysicsWorld,
+  course: Course,
+  cooldown: Map<BallId, number>,
+  elapsedMs: number,
+  rng: Rng,
+  stuck: Set<BallId>,
+): DeviceEvent[] {
+  const events: DeviceEvent[] = [];
+  if (course.trampolines.length === 0) return events;
+  for (const [id, body] of world.bodies) {
+    if (elapsedMs - (cooldown.get(id) ?? -Infinity) < LAUNCH_COOLDOWN_MS) continue;
+    if (stuck.has(id)) continue; // 정체 공은 런처가 양보 — antiStuck이 끌어내리게
+    for (const t of course.trampolines) {
+      // 윗면 접촉대만 발동 — 아래/옆에서 스치는 공은 일반 물리에 맡긴다
+      if (body.position.x < t.x - t.w / 2 || body.position.x > t.x + t.w / 2) continue;
+      const dy = body.position.y - t.y;
+      if (dy < -(t.h / 2 + course.ballRadius + 4) || dy > t.h / 2 + course.ballRadius) continue;
+      // 부호만 랜덤·크기는 보장된 수평 킥 — 매 발사가 패드를 확실히 벗어나 수직 핑퐁 클로깅을 깬다.
+      // (vy를 낮게 잡아 속도 클램프가 수평 성분을 먹지 않게 함 → 한 번에 패드 밖으로)
+      const kick = (rng() < 0.5 ? -1 : 1) * (5 + rng() * 3);
+      Matter.Body.setVelocity(body, { x: kick, y: t.vy });
+      cooldown.set(id, elapsedMs);
+      events.push({ x: t.x, y: t.y, kind: 'trampoline', ballId: id });
+      break;
     }
   }
   return events;

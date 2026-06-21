@@ -11,12 +11,14 @@ const WALL_COLOR = '#161a2b';
 const FINISH_COLOR = '#ff3df0';
 const SPINNER_COLOR = '#ff9b3d';
 const KICKER_COLOR = '#ff4d6d';
+const SEESAW_COLOR = '#e8c06a';
 const BOOSTER_COLOR = '#41f5a3';
 const UPDRAFT_COLOR = '#5ad7ff';
 const POP_COLOR = '#ff5d8f';
 const TELE_IN = '#b46bff';
 const TELE_OUT = '#6bc6ff';
 const JUMP_COLOR = '#5affa3';
+const TRAMPOLINE_COLOR = '#ffe14d';
 const CANNON_COLOR = '#ff6a3d';
 const SPLITTER_COLOR = '#9a8aff';
 const LABEL = '#ffffff';
@@ -88,12 +90,14 @@ export function render(ctx: CanvasRenderingContext2D, engine: Engine, cam: Camer
   drawSplitters(ctx, course, visible);
   drawBoosters(ctx, course, visible);
   drawJumpPads(ctx, course, visible);
+  drawTrampolines(ctx, course, visible);
   drawCannons(ctx, course, visible);
   drawTeleports(ctx, course, visible);
   drawBumpers(ctx, course, visible);
   drawPops(ctx, course, visible);
   drawPegs(ctx, course, visible);
   drawSpinners(ctx, engine, course, visible);
+  drawSeesaws(ctx, engine, course, visible);
   drawSectionDividers(ctx, course, visible);
   drawBalls(ctx, engine, visible);
   drawBasin(ctx, engine, visible);
@@ -284,6 +288,35 @@ function drawSpinners(ctx: CanvasRenderingContext2D, engine: Engine, course: Cou
   });
 }
 
+// 시소: 받침 삼각형 + 현재 각도의 판자 + 피벗 점
+function drawSeesaws(ctx: CanvasRenderingContext2D, engine: Engine, course: Course, visible: (y: number) => boolean): void {
+  const angles = engine.seesawAngles();
+  course.seesaws.forEach((s, i) => {
+    if (!visible(s.y)) return;
+    ctx.fillStyle = '#6b5a33';
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y);
+    ctx.lineTo(s.x - 12, s.y + 22);
+    ctx.lineTo(s.x + 12, s.y + 22);
+    ctx.closePath();
+    ctx.fill();
+    glow(ctx, SEESAW_COLOR, 12);
+    ctx.fillStyle = SEESAW_COLOR;
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(angles[i] ?? s.angle);
+    ctx.beginPath();
+    ctx.roundRect(-s.length / 2, -s.thickness / 2, s.length, s.thickness, 6);
+    ctx.fill();
+    ctx.restore();
+    clearGlow(ctx);
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
 function drawBoosters(ctx: CanvasRenderingContext2D, course: Course, visible: (y: number) => boolean): void {
   for (const b of course.boosters) {
     if (!visible(b.y)) continue;
@@ -358,6 +391,41 @@ function drawJumpPads(ctx: CanvasRenderingContext2D, course: Course, visible: (y
       ctx.moveTo(j.x - 10, j.y + 4 + oy);
       ctx.lineTo(j.x, j.y - 6 + oy);
       ctx.lineTo(j.x + 10, j.y + 4 + oy);
+      ctx.stroke();
+    }
+  }
+}
+
+// 트램펄린: 양 끝 기둥 사이에 활처럼 아래로 휜 고무줄 막. 위로 튕긴다는 인상.
+function drawTrampolines(ctx: CanvasRenderingContext2D, course: Course, visible: (y: number) => boolean): void {
+  for (const t of course.trampolines) {
+    if (!visible(t.y)) continue;
+    const lx = t.x - t.w / 2;
+    const rx = t.x + t.w / 2;
+    const sag = t.h * 0.9; // 가운데 처짐
+    // 지지 기둥
+    ctx.fillStyle = '#7a6a2a';
+    ctx.fillRect(lx - 3, t.y - t.h, 5, t.h + 8);
+    ctx.fillRect(rx - 2, t.y - t.h, 5, t.h + 8);
+    // 고무줄 막 (아래로 휜 곡선) — 위로 발사 인상
+    glow(ctx, TRAMPOLINE_COLOR, 14);
+    ctx.strokeStyle = TRAMPOLINE_COLOR;
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(lx, t.y - t.h / 2);
+    ctx.quadraticCurveTo(t.x, t.y + sag, rx, t.y - t.h / 2);
+    ctx.stroke();
+    clearGlow(ctx);
+    // 위 방향 셰브론 2겹 (반동 방향)
+    ctx.strokeStyle = TRAMPOLINE_COLOR;
+    ctx.lineWidth = 3;
+    for (let k = 0; k <= 1; k++) {
+      const oy = k * 7;
+      ctx.beginPath();
+      ctx.moveTo(t.x - 9, t.y - 8 + oy);
+      ctx.lineTo(t.x, t.y - 16 + oy);
+      ctx.lineTo(t.x + 9, t.y - 8 + oy);
       ctx.stroke();
     }
   }

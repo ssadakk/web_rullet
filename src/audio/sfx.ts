@@ -95,10 +95,11 @@ export class Sfx {
   }
 
   // 장치 발동: 종류별 음색
-  device(kind: 'teleport' | 'jump' | 'cannon' | 'pop'): void {
+  device(kind: 'teleport' | 'jump' | 'cannon' | 'pop' | 'trampoline'): void {
     switch (kind) {
       case 'cannon': this.noiseBurst(0.2, 0.22, 500); this.blip(150, 0.26, 'sawtooth', 0.18, 70); break;
       case 'jump': this.blip(300, 0.18, 'square', 0.16, 780); break;
+      case 'trampoline': this.blip(220, 0.24, 'sine', 0.18, 900); break; // 통 튀는 저음 → 상승 글리산도
       case 'pop': this.blip(520, 0.08, 'square', 0.15); break;
       case 'teleport': this.blip(680, 0.22, 'sine', 0.12, 1500); break;
     }
